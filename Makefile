@@ -41,15 +41,17 @@ install: ## install poke and poked into the go bin dir
 	@go install $(LDFLAGS) ./cmd/poke ./cmd/poked
 	@$(OK) "installed to $$(go env GOBIN 2>/dev/null || echo $$(go env GOPATH)/bin)"
 
-dist: ## cross-compile release binaries into dist/
+dist: ## cross-compile per-platform release tarballs into dist/
 	@$(INFO) "cross-compiling $(VERSION)"
 	@rm -rf $(DIST) && mkdir -p $(DIST)
 	@for p in $(PLATFORMS); do \
 		os=$${p%/*}; arch=$${p#*/}; \
+		stage="$(DIST)/stage_$${os}_$${arch}"; mkdir -p "$$stage"; \
 		for cmd in poke poked; do \
-			out="$(DIST)/$${cmd}_$${os}_$${arch}"; \
-			GOOS=$$os GOARCH=$$arch go build $(LDFLAGS) -o "$$out" ./cmd/$$cmd || exit 1; \
+			GOOS=$$os GOARCH=$$arch go build $(LDFLAGS) -o "$$stage/$$cmd" ./cmd/$$cmd || exit 1; \
 		done; \
+		tar -czf "$(DIST)/poke_$${os}_$${arch}.tar.gz" -C "$$stage" poke poked; \
+		rm -rf "$$stage"; \
 		$(OK) "$$os/$$arch"; \
 	done
 

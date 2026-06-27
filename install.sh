@@ -39,12 +39,20 @@ download_release() {
 	fi
 	[ -n "$tag" ] || return 1
 
-	local base="https://github.com/$REPO/releases/download/$tag"
-	for bin in poke poked; do
-		printf 'downloading %s_%s_%s (%s)\n' "$bin" "$os" "$arch" "$tag"
-		curl -fSL "$base/${bin}_${os}_${arch}" -o "$INSTALL_DIR/$bin" || return 1
-		chmod +x "$INSTALL_DIR/$bin"
-	done
+	local url="https://github.com/$REPO/releases/download/$tag/poke_${os}_${arch}.tar.gz"
+	local tmp
+	tmp=$(mktemp -d)
+	printf 'downloading poke_%s_%s (%s)\n' "$os" "$arch" "$tag"
+	if ! curl -fSL "$url" -o "$tmp/poke.tar.gz"; then
+		rm -rf "$tmp"
+		return 1
+	fi
+	if ! tar -xzf "$tmp/poke.tar.gz" -C "$tmp"; then
+		rm -rf "$tmp"
+		return 1
+	fi
+	install -m 0755 "$tmp/poke" "$tmp/poked" "$INSTALL_DIR"/
+	rm -rf "$tmp"
 }
 
 build_from_source() {

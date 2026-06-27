@@ -39,13 +39,20 @@ sender's poke already reported `delivered`; seen arrives later, when they look.
 
 ## Install
 
+homebrew (macOS and linux):
+
+```sh
+brew install undont/tap/poke
+```
+
+or the install script, for machines without homebrew. it pulls the per-platform
+tarball for your machine from the latest release into `~/.local/bin` (override
+with `POKE_INSTALL_DIR`), and builds from source with go if no release exists yet:
+
 ```sh
 curl -fsSL https://raw.githubusercontent.com/undont/poke/main/install.sh | bash
 ```
 
-this downloads the `poke` and `poked` binaries for your machine from the latest
-release into `~/.local/bin` (override with `POKE_INSTALL_DIR`). if no release
-exists yet and go is installed, it builds from source instead. equivalent
 manual routes:
 
 ```sh

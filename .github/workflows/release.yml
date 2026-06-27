@@ -131,3 +131,20 @@ jobs:
           else
             gh release create "$TAG" dist/* --title "$TAG" --generate-notes
           fi
+
+      - name: Bare version
+        id: bare
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: echo "v=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      # tell the homebrew tap to refresh the formula version and checksums.
+      # best effort: a missing HOMEBREW_TAP_TOKEN should not fail the release.
+      - name: Update Homebrew tap
+        continue-on-error: true
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          repository: undont/homebrew-tap
+          event-type: update-formula
+          client-payload: '{"formula": "poke", "version": "${{ steps.bare.outputs.v }}"}'
