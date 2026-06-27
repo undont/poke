@@ -110,7 +110,7 @@ func peerFrom(e *zeroconf.ServiceEntry, want string) (Peer, bool) {
 	if hasFlag(e.Text, "relay=1") || txtUser(e.Text) != want {
 		return Peer{}, false
 	}
-	ip := firstIPv4(e.AddrIPv4)
+	ip := bestIPv4(e.AddrIPv4)
 	if ip == "" || e.Port == 0 {
 		return Peer{}, false
 	}
@@ -136,7 +136,7 @@ func relayFrom(e *zeroconf.ServiceEntry) (Relay, bool) {
 	if !hasFlag(e.Text, "relay=1") {
 		return Relay{}, false
 	}
-	ip := firstIPv4(e.AddrIPv4)
+	ip := bestIPv4(e.AddrIPv4)
 	if ip == "" || e.Port == 0 {
 		return Relay{}, false
 	}
@@ -155,11 +155,29 @@ func hasFlag(txt []string, flag string) bool {
 	return false
 }
 
-func firstIPv4(ips []net.IP) string {
+// bestIPv4 picks a dialable IPv4 from an advertised set. an mDNS advert carries
+// every interface address, so a host on tailscale publishes its 100.64.0.0/10
+// CGNAT tailnet address alongside its LAN one; that address is unreachable from
+// a peer on a different tailnet, so it is only used when nothing else is offered.
+func bestIPv4(ips []net.IP) string {
+	var fallback string
 	for _, ip := range ips {
-		if v4 := ip.To4(); v4 != nil {
-			return v4.String()
+		v4 := ip.To4()
+		if v4 == nil {
+			continue
 		}
+		if isCGNAT(v4) {
+			if fallback == "" {
+				fallback = v4.String()
+			}
+			continue
+		}
+		return v4.String()
 	}
-	return ""
+	return fallback
+}
+
+// isCGNAT reports whether v4 falls in the 100.64.0.0/10 shared address space.
+func isCGNAT(v4 net.IP) bool {
+	return v4[0] == 100 && v4[1] >= 64 && v4[1] <= 127
 }
