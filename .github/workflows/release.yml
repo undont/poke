@@ -42,7 +42,9 @@ jobs:
           MSG=$(git log -1 --pretty=%B)
           SUBJECT=$(printf '%s' "$MSG" | head -1)
 
-          if printf '%s' "$MSG" | grep -qE 'BREAKING CHANGE' || printf '%s' "$SUBJECT" | grep -qE '^[a-z]+(\(.+\))?!:'; then
+          # a breaking change is the ! in the subject type, or a BREAKING CHANGE:
+          # footer (line start, with colon), not the phrase anywhere in the body.
+          if printf '%s\n' "$MSG" | grep -qE '^BREAKING[ -]CHANGE:' || printf '%s' "$SUBJECT" | grep -qE '^[a-z]+(\(.+\))?!:'; then
             BUMP=major
           elif printf '%s' "$SUBJECT" | grep -qE '^feat(\(.+\))?:'; then
             BUMP=minor
