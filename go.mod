@@ -5,6 +5,7 @@ go 1.26.4
 require (
 	github.com/coder/websocket v1.8.15
 	github.com/grandcat/zeroconf v1.0.0
+	go.etcd.io/bbolt v1.5.0
 )
 
 require (

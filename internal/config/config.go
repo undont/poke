@@ -4,18 +4,23 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"time"
 )
+
+// defaultQueueTTL is how long a poke lingers for an offline target.
+const defaultQueueTTL = 24 * time.Hour
 
 // Config is the resolved daemon/CLI configuration.
 type Config struct {
-	User       string // self-claimed username, defaults to $USER
-	Host       string // os hostname
-	Secret     string // shared team secret, never logged
-	SocketPath string // CLI <-> daemon unix socket
-	PeersFile  string // tmux alert surface for incoming pokes
-	StateDir   string // logs and durable daemon state
-	RelayAddr  string // optional fixed relay address, empty means mDNS
-	Icon       string // status-bar glyph for incoming pokes, empty means default
+	User       string        // self-claimed username, defaults to $USER
+	Host       string        // os hostname
+	Secret     string        // shared team secret, never logged
+	SocketPath string        // CLI <-> daemon unix socket
+	PeersFile  string        // tmux alert surface for incoming pokes
+	StateDir   string        // logs and durable daemon state
+	RelayAddr  string        // optional fixed relay address, empty means mDNS
+	Icon       string        // status-bar glyph for incoming pokes, empty means default
+	QueueTTL   time.Duration // how long a relay holds a poke for an offline target
 }
 
 // Load assembles a Config from environment and sensible defaults.
@@ -33,8 +38,20 @@ func Load() (*Config, error) {
 		StateDir:   stateDir(),
 		RelayAddr:  os.Getenv("POKE_RELAY_ADDR"),
 		Icon:       os.Getenv("POKE_ICON"),
+		QueueTTL:   queueTTL(),
 	}
 	return c, nil
+}
+
+// queueTTL reads POKE_QUEUE_TTL (a Go duration like "12h"), falling back to the
+// default.
+func queueTTL() time.Duration {
+	if v := os.Getenv("POKE_QUEUE_TTL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
+		}
+	}
+	return defaultQueueTTL
 }
 
 // socketPath prefers $XDG_RUNTIME_DIR, falling back to the config dir.

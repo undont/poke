@@ -30,6 +30,7 @@ const (
 	TypePoke     = "poke"
 	TypePoked    = "poked"
 	TypeAck      = "ack"
+	TypeQueued   = "queued"
 	TypePresence = "presence"
 	TypeError    = "error"
 )
@@ -81,6 +82,12 @@ type Ack struct {
 	Type string `json:"type"`
 	ID   string `json:"id"`
 	Seen bool   `json:"seen"`
+}
+
+// QueuedNotice tells the sender its poke was stored for an offline target.
+type QueuedNotice struct {
+	Type string `json:"type"`
+	ID   string `json:"id"`
 }
 
 // Presence is broadcast on roster changes.

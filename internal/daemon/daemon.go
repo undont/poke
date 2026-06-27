@@ -166,6 +166,11 @@ func (d *Daemon) handleFrame(frame []byte) {
 		if err := json.Unmarshal(frame, &a); err == nil {
 			d.resolve(a.ID, outcome{mode: protocol.Delivered})
 		}
+	case protocol.TypeQueued:
+		var qd protocol.QueuedNotice
+		if err := json.Unmarshal(frame, &qd); err == nil {
+			d.resolve(qd.ID, outcome{mode: protocol.Queued})
+		}
 	case protocol.TypeError:
 		var e protocol.Error
 		if err := json.Unmarshal(frame, &e); err == nil && e.ID != "" {

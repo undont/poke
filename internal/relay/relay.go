@@ -1,6 +1,6 @@
 // package relay is the same binary in relay mode: one always-on box that
-// authenticates daemons, holds the live roster, and routes pokes. phase 0
-// forwards to connected targets only; the offline queue lands later.
+// authenticates daemons, holds the live roster, routes pokes to connected
+// targets, and queues them durably for offline ones.
 package relay
 
 import (
@@ -8,12 +8,14 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net"
+	"os"
 	"sync"
 	"time"
 
 	"github.com/undont/poke/internal/config"
 	"github.com/undont/poke/internal/discovery"
 	"github.com/undont/poke/internal/protocol"
+	"github.com/undont/poke/internal/queue"
 	"github.com/undont/poke/internal/transport"
 	"github.com/undont/poke/internal/version"
 )
@@ -41,9 +43,10 @@ func (c *client) send(ctx context.Context, v any) error {
 
 // Relay is the running relay process.
 type Relay struct {
-	cfg *config.Config
-	log *slog.Logger
-	adv discovery.Advertiser
+	cfg   *config.Config
+	log   *slog.Logger
+	adv   discovery.Advertiser
+	queue *queue.Queue
 
 	mu      sync.Mutex
 	clients map[string]*client // user -> client
@@ -62,6 +65,16 @@ func New(cfg *config.Config, log *slog.Logger) *Relay {
 // Run binds an ephemeral port, advertises it over mDNS, and serves daemons
 // until ctx is cancelled.
 func (r *Relay) Run(ctx context.Context) error {
+	if err := os.MkdirAll(r.cfg.StateDir, 0o700); err != nil {
+		return err
+	}
+	q, err := queue.Open(r.cfg.StateDir)
+	if err != nil {
+		return err
+	}
+	r.queue = q
+	defer q.Close()
+
 	ln, err := net.Listen("tcp", ":0")
 	if err != nil {
 		return err
@@ -140,7 +153,27 @@ func (r *Relay) handshake(ctx context.Context, conn transport.Conn) (*client, er
 		return nil, err
 	}
 	r.broadcast(ctx, protocol.Presence{Type: protocol.TypePresence, User: c.user, Online: true}, c.user)
+	r.drainTo(ctx, c)
 	return c, nil
+}
+
+// drainTo replays any pokes queued for a just-connected client, in send order,
+// dropping ones past the ttl.
+func (r *Relay) drainTo(ctx context.Context, c *client) {
+	pokes, err := r.queue.Drain(c.user, r.cfg.QueueTTL, time.Now())
+	if err != nil {
+		r.log.Error("drain failed", "user", c.user, "err", err)
+		return
+	}
+	if len(pokes) == 0 {
+		return
+	}
+	r.log.Info("draining queue", "user", c.user, "count", len(pokes))
+	for _, poked := range pokes {
+		if err := c.send(ctx, poked); err != nil {
+			return
+		}
+	}
 }
 
 // dispatch routes one inbound frame from a connected client.
@@ -159,22 +192,26 @@ func (r *Relay) dispatch(ctx context.Context, from *client, frame []byte) {
 	}
 }
 
-// route forwards a poke to its target, or reports it offline (no queue in phase 0).
+// route delivers a poke to a connected target, or queues it for an offline one.
 func (r *Relay) route(ctx context.Context, from *client, p protocol.Poke) {
 	r.mu.Lock()
 	target := r.clients[p.To]
 	r.mu.Unlock()
 
-	if target == nil {
-		_ = from.send(ctx, protocol.Error{
-			Type: protocol.TypeError, ID: p.ID, Code: "offline",
-			Message: p.To + " is not connected",
-		})
-		return
-	}
 	poked := protocol.Poked{
 		Type: protocol.TypePoked, ID: p.ID, From: from.user,
 		Strength: p.Strength, Note: p.Note, TS: p.TS,
+	}
+
+	if target == nil {
+		if err := r.queue.Enqueue(p.To, poked); err != nil {
+			r.log.Error("enqueue failed", "to", p.To, "err", err)
+			_ = from.send(ctx, protocol.Error{Type: protocol.TypeError, ID: p.ID, Code: "enqueue_failed", Message: err.Error()})
+			return
+		}
+		r.log.Info("poke queued", "to", p.To, "from", from.user)
+		_ = from.send(ctx, protocol.QueuedNotice{Type: protocol.TypeQueued, ID: p.ID})
+		return
 	}
 	if err := target.send(ctx, poked); err != nil {
 		_ = from.send(ctx, protocol.Error{Type: protocol.TypeError, ID: p.ID, Code: "deliver_failed", Message: err.Error()})

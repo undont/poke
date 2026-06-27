@@ -17,14 +17,16 @@ three artifacts from one go binary set:
 
 ## Status
 
-phases 0 and 1 land. a poke travels across machines end to end: the daemon
+phases 0, 1, and 3 land. a poke travels across machines end to end: the daemon
 finds the relay over mDNS, dials it over a websocket, and on delivery writes
 the peers file and rings the bell. `poke render` paints a status-right segment
 (icon, stable per-user colour, urgency emphasis, `+N` overflow); see
-`examples/tmux.conf` for the status line and clear keybinding.
+`examples/tmux.conf` for the status line and clear keybinding. a poke to an
+offline target is queued durably on the relay (bbolt) and drained in order when
+they reconnect, dropping anything past `POKE_QUEUE_TTL` (default 24h).
 
-not yet built: the offline queue (poking an offline user errors rather than
-queueing), `seen` acks, presence-driven `who`, and the live-only fallback when
+not yet built: urgency persistence (high persisting until cleared), daemon
+autostart, `seen` acks, presence-driven `who`, and the live-only fallback when
 no relay is up.
 
 ## Build
