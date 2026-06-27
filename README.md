@@ -27,8 +27,13 @@ they reconnect, dropping anything past `POKE_QUEUE_TTL` (default 24h). `poke
 who` shows the live roster, kept current as peers join and leave. every poke
 persists until you clear it; urgency drives only how loud the arrival is.
 
-not yet built: `seen` acks (delivered vs read), and the live-only peer-to-peer
-fallback when no relay is up.
+when no relay is advertising, the daemon falls back to live-only delivery: it
+resolves the target's daemon over mDNS and pokes it directly. this lands only
+while both peers are online (no durable queue without a relay), and the cli
+reports the mode it used (`delivered` / `queued` / `live-only`) so the sender is
+never misled about durability.
+
+not yet built: `seen` acks (delivered vs read).
 
 ## Install
 

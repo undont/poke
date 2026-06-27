@@ -17,10 +17,19 @@ type Relay struct {
 	Addr string // host:port the daemon dials
 }
 
-// Browser finds relays on the network.
+// Peer is a discovered daemon endpoint, used for live-only direct delivery.
+type Peer struct {
+	User string
+	Host string
+	Addr string // host:port the daemon dials
+}
+
+// Browser finds relays and peers on the network.
 type Browser interface {
 	// FindRelay blocks until a relay is discovered or ctx is done.
 	FindRelay(ctx context.Context) (Relay, error)
+	// FindPeer blocks until the named daemon is discovered or ctx is done.
+	FindPeer(ctx context.Context, user string) (Peer, error)
 	Close() error
 }
 

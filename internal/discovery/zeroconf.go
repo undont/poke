@@ -20,9 +20,12 @@ func NewAdvertiser() Advertiser { return &zcAdvertiser{} }
 
 func (a *zcAdvertiser) Advertise(ctx context.Context, user string, isRelay bool, port int) error {
 	host, _ := os.Hostname()
+	// give the relay a distinct instance so one host can run both a relay and a
+	// daemon for the same user without an mDNS instance-name collision.
 	instance := fmt.Sprintf("%s@%s", user, host)
 	txt := []string{"user=" + user}
 	if isRelay {
+		instance += "-relay"
 		txt = append(txt, "relay=1")
 	}
 	server, err := zeroconf.Register(instance, Service, Domain, port, txt, nil)
@@ -74,7 +77,59 @@ func (b *zcBrowser) FindRelay(ctx context.Context) (Relay, error) {
 	}
 }
 
+// FindPeer resolves the named daemon (matching its user= record and not a
+// relay) so a poke can be delivered directly when no relay is up.
+func (b *zcBrowser) FindPeer(ctx context.Context, user string) (Peer, error) {
+	resolver, err := zeroconf.NewResolver(nil)
+	if err != nil {
+		return Peer{}, err
+	}
+	entries := make(chan *zeroconf.ServiceEntry, 8)
+	if err := resolver.Browse(ctx, Service, Domain, entries); err != nil {
+		return Peer{}, err
+	}
+	for {
+		select {
+		case e, ok := <-entries:
+			if !ok {
+				return Peer{}, ctx.Err()
+			}
+			if p, ok := peerFrom(e, user); ok {
+				return p, nil
+			}
+		case <-ctx.Done():
+			return Peer{}, ctx.Err()
+		}
+	}
+}
+
 func (b *zcBrowser) Close() error { return nil }
+
+// peerFrom extracts a dialable daemon for the wanted user, skipping relays.
+func peerFrom(e *zeroconf.ServiceEntry, want string) (Peer, bool) {
+	if hasFlag(e.Text, "relay=1") || txtUser(e.Text) != want {
+		return Peer{}, false
+	}
+	ip := firstIPv4(e.AddrIPv4)
+	if ip == "" || e.Port == 0 {
+		return Peer{}, false
+	}
+	return Peer{
+		User: want,
+		Host: e.HostName,
+		Addr: net.JoinHostPort(ip, fmt.Sprint(e.Port)),
+	}, true
+}
+
+// txtUser returns the user= value from a TXT record set, or "".
+func txtUser(txt []string) string {
+	for _, t := range txt {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(t), "user="); ok {
+			return v
+		}
+	}
+	return ""
+}
 
 // relayFrom extracts a dialable relay from an entry that advertises relay=1.
 func relayFrom(e *zeroconf.ServiceEntry) (Relay, bool) {

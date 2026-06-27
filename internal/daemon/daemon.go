@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"net"
 	"sort"
 	"sync"
 	"time"
@@ -22,13 +23,17 @@ import (
 	"github.com/undont/poke/internal/version"
 )
 
-// how long the CLI side waits for the relay to confirm a poke landed.
+// how long the CLI side waits for a poke to be confirmed.
 const ackTimeout = 2 * time.Second
 
-// reconnect backoff bounds.
+// how long to wait for a peer's hello on an incoming direct connection.
+const handshakeTimeout = 5 * time.Second
+
 const (
-	backoffMin = 500 * time.Millisecond
-	backoffMax = 15 * time.Second
+	backoffMin  = 500 * time.Millisecond // pause before reconnecting after a dropped relay
+	relaySearch = 4 * time.Second        // how long to look for a relay each cycle
+	relayRetry  = 8 * time.Second        // how long to stay live-only before re-checking
+	peerSearch  = 3 * time.Second        // how long to look for a target daemon in live-only
 )
 
 // outcome is the relay's verdict on a sent poke, delivered to a waiting handler.
@@ -44,6 +49,7 @@ type Daemon struct {
 	peers   *peersfile.Writer
 	dialer  transport.Dialer
 	browser discovery.Browser
+	adv     discovery.Advertiser
 
 	mu      sync.Mutex
 	conn    transport.Conn
@@ -60,40 +66,115 @@ func New(cfg *config.Config, log *slog.Logger) *Daemon {
 		peers:   peersfile.New(cfg.PeersFile),
 		dialer:  transport.NewDialer(),
 		browser: discovery.NewBrowser(),
+		adv:     discovery.NewAdvertiser(),
 		peerSet: make(map[string]protocol.RosterEntry),
 		pending: make(map[string]chan outcome),
 	}
 }
 
-// Run binds the unix socket, drives the relay connection, and serves the CLI
-// until ctx is cancelled.
+// Run binds the unix socket, advertises and serves direct peer connections,
+// drives the relay connection, and serves the CLI until ctx is cancelled.
 func (d *Daemon) Run(ctx context.Context) error {
 	srv, err := ipc.Listen(d.cfg.SocketPath)
 	if err != nil {
 		return err
 	}
-	d.log.Info("daemon listening", "socket", d.cfg.SocketPath, "user", d.cfg.User)
 
+	// listen for direct peer pokes and advertise this daemon so others can find
+	// it, both for the live roster and for live-only delivery when no relay is up.
+	ln, err := net.Listen("tcp", ":0")
+	if err != nil {
+		return err
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	if err := d.adv.Advertise(ctx, d.cfg.User, false, port); err != nil {
+		d.log.Warn("mdns advertise failed", "err", err)
+	}
+	d.log.Info("daemon listening", "socket", d.cfg.SocketPath, "p2p", port, "user", d.cfg.User)
+
+	go d.serveP2P(ctx, ln)
 	go d.connectLoop(ctx)
 	go func() {
 		<-ctx.Done()
 		_ = srv.Close()
+		_ = d.adv.Close()
 	}()
 	return srv.Serve(d.handle)
 }
 
-// connectLoop discovers and dials the relay, runs a session, and reconnects
-// with capped backoff.
-func (d *Daemon) connectLoop(ctx context.Context) {
-	backoff := backoffMin
-	for ctx.Err() == nil {
-		relay, err := d.browser.FindRelay(ctx)
+// serveP2P accepts direct peer connections for live-only delivery.
+func (d *Daemon) serveP2P(ctx context.Context, ln net.Listener) {
+	l := transport.Listen(ln)
+	go func() {
+		<-ctx.Done()
+		_ = l.Close()
+	}()
+	for {
+		conn, err := l.Accept(ctx)
 		if err != nil {
 			if ctx.Err() != nil {
 				return
 			}
-			d.sleep(ctx, backoff)
-			backoff = next(backoff)
+			continue
+		}
+		go d.servePeer(ctx, conn)
+	}
+}
+
+// servePeer handles one inbound direct connection: authenticate, then deliver
+// any poked frames the peer sends, acking each.
+func (d *Daemon) servePeer(ctx context.Context, conn transport.Conn) {
+	defer conn.Close()
+
+	hctx, cancel := context.WithTimeout(ctx, handshakeTimeout)
+	frame, err := conn.ReadFrame(hctx)
+	cancel()
+	if err != nil {
+		return
+	}
+	var hello protocol.Hello
+	if json.Unmarshal(frame, &hello) != nil || hello.Type != protocol.TypeHello {
+		return
+	}
+	if hello.Secret != d.cfg.Secret {
+		return
+	}
+	if err := writeFrame(ctx, conn, protocol.Welcome{Type: protocol.TypeWelcome, Protocol: version.Protocol}); err != nil {
+		return
+	}
+
+	for {
+		frame, err := conn.ReadFrame(ctx)
+		if err != nil {
+			return
+		}
+		var env protocol.Envelope
+		if json.Unmarshal(frame, &env) != nil {
+			continue
+		}
+		if env.Type == protocol.TypePoked {
+			var p protocol.Poked
+			if json.Unmarshal(frame, &p) == nil {
+				d.deliver(p)
+				_ = writeFrame(ctx, conn, protocol.Ack{Type: protocol.TypeAck, ID: p.ID, Seen: false})
+			}
+		}
+	}
+}
+
+// connectLoop looks for a relay each cycle; finding one it runs a relay session,
+// otherwise it stays in live-only mode and re-checks later. while there is no
+// relay connection, pokes are delivered directly peer-to-peer.
+func (d *Daemon) connectLoop(ctx context.Context) {
+	for ctx.Err() == nil {
+		findCtx, cancel := context.WithTimeout(ctx, relaySearch)
+		relay, err := d.browser.FindRelay(findCtx)
+		cancel()
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			d.sleep(ctx, relayRetry) // no relay; remain live-only and re-check
 			continue
 		}
 		d.log.Info("relay found", "addr", relay.Addr, "host", relay.Host)
@@ -102,8 +183,7 @@ func (d *Daemon) connectLoop(ctx context.Context) {
 		}
 		d.setConn(nil)
 		d.setRoster(nil) // the roster is unknown while disconnected
-		d.sleep(ctx, backoff)
-		backoff = next(backoff)
+		d.sleep(ctx, backoffMin)
 	}
 }
 
@@ -245,7 +325,8 @@ func (d *Daemon) handlePoke(req protocol.IPCRequest) protocol.IPCResponse {
 	}
 	conn := d.getConn()
 	if conn == nil {
-		return protocol.IPCResponse{OK: false, Error: "no relay connection"}
+		// no relay: deliver directly to the target's daemon, live only.
+		return d.pokeDirect(req.To, s, clampNote(req.Note))
 	}
 
 	p := protocol.Poke{
@@ -269,6 +350,46 @@ func (d *Daemon) handlePoke(req protocol.IPCRequest) protocol.IPCResponse {
 	case <-time.After(ackTimeout):
 		return protocol.IPCResponse{OK: true, Mode: protocol.Delivered}
 	}
+}
+
+// pokeDirect delivers a poke straight to the target's daemon over mDNS, used
+// when no relay is up. there is no durable queue on this path, so an offline
+// target is simply unreachable.
+func (d *Daemon) pokeDirect(to string, s protocol.Strength, note string) protocol.IPCResponse {
+	searchCtx, cancel := context.WithTimeout(context.Background(), peerSearch)
+	peer, err := d.browser.FindPeer(searchCtx, to)
+	cancel()
+	if err != nil {
+		return protocol.IPCResponse{OK: false, Error: to + " not reachable (no relay, peer offline)"}
+	}
+
+	dctx, cancel := context.WithTimeout(context.Background(), ackTimeout)
+	defer cancel()
+	conn, err := d.dialer.Dial(dctx, peer.Addr)
+	if err != nil {
+		return protocol.IPCResponse{OK: false, Error: err.Error()}
+	}
+	defer conn.Close()
+
+	hello := protocol.Hello{Type: protocol.TypeHello, User: d.cfg.User, Host: d.cfg.Host, Secret: d.cfg.Secret}
+	if err := writeFrame(dctx, conn, hello); err != nil {
+		return protocol.IPCResponse{OK: false, Error: err.Error()}
+	}
+	if env, err := readEnvelope(dctx, conn); err != nil || env.Type != protocol.TypeWelcome {
+		return protocol.IPCResponse{OK: false, Error: "peer refused connection (secret mismatch?)"}
+	}
+
+	poked := protocol.Poked{
+		Type: protocol.TypePoked, ID: id.New(), From: d.cfg.User,
+		Strength: s, Note: note, TS: time.Now().Unix(),
+	}
+	if err := writeFrame(dctx, conn, poked); err != nil {
+		return protocol.IPCResponse{OK: false, Error: err.Error()}
+	}
+	if env, err := readEnvelope(dctx, conn); err != nil || env.Type != protocol.TypeAck {
+		return protocol.IPCResponse{OK: false, Error: "no ack from peer"}
+	}
+	return protocol.IPCResponse{OK: true, Mode: protocol.LiveOnly}
 }
 
 func (d *Daemon) handleWho() protocol.IPCResponse {
@@ -375,19 +496,24 @@ func writeFrame(ctx context.Context, conn transport.Conn, v any) error {
 	return conn.WriteFrame(ctx, b)
 }
 
+// readEnvelope reads the next frame and returns just its type tag.
+func readEnvelope(ctx context.Context, conn transport.Conn) (protocol.Envelope, error) {
+	frame, err := conn.ReadFrame(ctx)
+	if err != nil {
+		return protocol.Envelope{}, err
+	}
+	var env protocol.Envelope
+	if err := json.Unmarshal(frame, &env); err != nil {
+		return protocol.Envelope{}, err
+	}
+	return env, nil
+}
+
 func clampNote(s string) string {
 	if len(s) > protocol.NoteMaxBytes {
 		return s[:protocol.NoteMaxBytes]
 	}
 	return s
-}
-
-func next(b time.Duration) time.Duration {
-	b *= 2
-	if b > backoffMax {
-		return backoffMax
-	}
-	return b
 }
 
 type sessionError struct{ msg string }
