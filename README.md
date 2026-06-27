@@ -47,6 +47,8 @@ When no relay is advertising, the daemon falls back to live-only delivery: it re
 
 Clearing a poke acknowledges it: the recipient's daemon sends a seen ack back to the sender (via the relay), who gets a "saw your poke" notification. The sender's poke already reported `delivered`; seen arrives later, when they look.
 
+How an incoming poke is *surfaced* is the recipient's choice (`poke surface`, or `POKE_SURFACE`), independent of the sender. The `tmux` surface (default) is the ambient status-bar segment plus a bell on every attached client, with a desktop notification at high urgency. The `desktop` surface drops the tmux dependency and makes an OS notification the primary cue (`terminal-notifier` on macOS, `notify-send` on Linux): medium notifies at normal priority, high at critical. `auto` uses tmux when a server is up and desktop otherwise. The urgency ladder means the same on both surfaces; only the cue differs. The peers file is always written, so `poke who` and `poke render` work regardless of surface, the latter with `--format=ansi` for a shell prompt or polybar/waybar/sketchybar.
+
 ---
 
 ## Commands
@@ -63,7 +65,8 @@ Clearing a poke acknowledges it: the recipient's daemon sends a seen ack back to
 | `poke dnd` | Toggle do-not-disturb |
 | `poke name <name>` | Set your display name, defaults to `$USER` |
 | `poke secret [--generate]` | Set the shared secret; `--generate` mints and copies one |
-| `poke render` | Paint the tmux status-right segment |
+| `poke surface [tmux\|desktop\|auto]` | Show or set how incoming pokes are surfaced |
+| `poke render [--format=ansi\|tmux]` | Paint the status segment; `ansi` suits a non-tmux bar or prompt |
 
 ---
 

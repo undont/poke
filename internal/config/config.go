@@ -10,6 +10,15 @@ import (
 // defaultQueueTTL is how long a poke lingers for an offline target.
 const defaultQueueTTL = 24 * time.Hour
 
+// notification surfaces. tmux is the ambient status-bar surface; desktop makes
+// an OS notification the primary cue; auto picks tmux when a server is up and
+// desktop otherwise.
+const (
+	SurfaceTmux    = "tmux"
+	SurfaceDesktop = "desktop"
+	SurfaceAuto    = "auto"
+)
+
 // Config is the resolved daemon/CLI configuration.
 type Config struct {
 	User       string        // self-claimed username, defaults to $USER
@@ -20,6 +29,7 @@ type Config struct {
 	StateDir   string        // logs and durable daemon state
 	RelayAddr  string        // optional fixed relay address, empty means mDNS
 	Icon       string        // status-bar glyph for incoming pokes, empty means default
+	Surface    string        // how an incoming poke is surfaced: tmux, desktop, auto
 	QueueTTL   time.Duration // how long a relay holds a poke for an offline target
 }
 
@@ -42,9 +52,22 @@ func Load() (*Config, error) {
 		StateDir:   stateDir(),
 		RelayAddr:  firstNonEmpty(os.Getenv("POKE_RELAY_ADDR"), file["relay_addr"]),
 		Icon:       firstNonEmpty(os.Getenv("POKE_ICON"), file["icon"]),
+		Surface:    surface(firstNonEmpty(os.Getenv("POKE_SURFACE"), file["surface"])),
 		QueueTTL:   queueTTL(),
 	}
 	return c, nil
+}
+
+// surface normalises a configured surface value, falling back to tmux for an
+// empty or unrecognised one so a typo degrades to the default rather than
+// silently disabling cues.
+func surface(v string) string {
+	switch v {
+	case SurfaceDesktop, SurfaceAuto, SurfaceTmux:
+		return v
+	default:
+		return SurfaceTmux
+	}
 }
 
 // queueTTL reads POKE_QUEUE_TTL (a Go duration like "12h"), falling back to the

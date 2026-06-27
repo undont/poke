@@ -85,3 +85,13 @@ func ValidateName(name string) error {
 	}
 	return nil
 }
+
+// ValidateSurface rejects an unknown notification surface.
+func ValidateSurface(s string) error {
+	switch s {
+	case SurfaceTmux, SurfaceDesktop, SurfaceAuto:
+		return nil
+	default:
+		return fmt.Errorf("invalid surface %q: use tmux, desktop, or auto", s)
+	}
+}

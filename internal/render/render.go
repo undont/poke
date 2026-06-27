@@ -1,6 +1,7 @@
-// package render turns the live pokes on disk into a tmux status-right segment:
-// an icon, each poker's name in a stable per-user colour, urgency-driven
-// emphasis, and a +N overflow when more pokes are pending than fit.
+// package render turns the live pokes on disk into a status segment: an icon,
+// each poker's name in a stable per-user colour, urgency-driven emphasis, and a
+// +N overflow when more pokes are pending than fit. it emits tmux status markup
+// by default, or plain ANSI for a shell prompt or polybar/waybar/sketchybar.
 package render
 
 import (
@@ -16,22 +17,32 @@ import (
 const MaxNames = 3
 
 // defaultIcon is a nerd-font bell; override with POKE_ICON.
-const defaultIcon = ""
+const defaultIcon = ""
 
-// palette is a curated set of readable tmux colours a username hashes into. a
-// stable hash means a given person is always the same colour for everyone.
+// Format selects the styling dialect of the segment.
+type Format string
+
+const (
+	FormatTmux Format = "tmux"
+	FormatANSI Format = "ansi"
+)
+
+// palette is a curated set of readable 256-colour indices a username hashes
+// into. a stable hash means a given person is always the same colour for
+// everyone, and the indices are shared by the tmux and ANSI dialects.
 var palette = []int{
 	39, 208, 76, 213, 178, 45, 170, 154, 203, 81, 222, 141,
 }
 
 // Options tunes a render.
 type Options struct {
-	Icon string
-	Max  int
+	Icon   string
+	Max    int
+	Format Format
 }
 
-// Segment builds the status-right string for the given pokes. it returns the
-// empty string when there are none, so the tmux segment collapses cleanly.
+// Segment builds the status segment for the given pokes. it returns the empty
+// string when there are none, so the segment collapses cleanly.
 func Segment(entries []peersfile.Entry, opt Options) string {
 	if len(entries) == 0 {
 		return ""
@@ -44,13 +55,12 @@ func Segment(entries []peersfile.Entry, opt Options) string {
 	if max <= 0 {
 		max = MaxNames
 	}
+	st := stylerFor(opt.Format)
 
 	var b strings.Builder
-	b.WriteString("#[fg=")
-	b.WriteString(colour(highest(entries)))
-	b.WriteString("]")
+	b.WriteString(st.fg(paletteIndex(highest(entries))))
 	b.WriteString(icon)
-	b.WriteString("#[default]")
+	b.WriteString(st.reset())
 
 	shown := entries
 	overflow := 0
@@ -60,7 +70,7 @@ func Segment(entries []peersfile.Entry, opt Options) string {
 	}
 	for _, e := range shown {
 		b.WriteByte(' ')
-		b.WriteString(name(e))
+		b.WriteString(name(e, st))
 	}
 	if overflow > 0 {
 		b.WriteString(" +")
@@ -70,28 +80,63 @@ func Segment(entries []peersfile.Entry, opt Options) string {
 }
 
 // name renders one poker: emphasis by strength, colour by username.
-func name(e peersfile.Entry) string {
-	return emphasis(e.Strength) + "#[fg=" + colour(e.From) + "]" + e.From + "#[default]"
+func name(e peersfile.Entry, st styler) string {
+	return emphasis(e.Strength, st) + st.fg(paletteIndex(e.From)) + e.From + st.reset()
 }
 
-// emphasis maps the urgency ladder to tmux attributes: low dim, medium normal,
-// high bold.
-func emphasis(s protocol.Strength) string {
+// emphasis maps the urgency ladder to attributes: low dim, medium normal, high
+// bold.
+func emphasis(s protocol.Strength, st styler) string {
 	switch s {
 	case protocol.Low:
-		return "#[dim]"
+		return st.dim()
 	case protocol.High:
-		return "#[bold]"
+		return st.bold()
 	default:
 		return ""
 	}
 }
 
-// colour picks a stable palette entry from the username hash.
-func colour(user string) string {
+// styler renders the per-dialect escapes; one implementation per Format.
+type styler interface {
+	fg(idx int) string
+	bold() string
+	dim() string
+	reset() string
+}
+
+func stylerFor(f Format) styler {
+	if f == FormatANSI {
+		return ansiStyler{}
+	}
+	return tmuxStyler{}
+}
+
+type tmuxStyler struct{}
+
+func (tmuxStyler) fg(idx int) string { return "#[fg=colour" + strconv.Itoa(idx) + "]" }
+func (tmuxStyler) bold() string      { return "#[bold]" }
+func (tmuxStyler) dim() string       { return "#[dim]" }
+func (tmuxStyler) reset() string     { return "#[default]" }
+
+type ansiStyler struct{}
+
+func (ansiStyler) fg(idx int) string { return "\x1b[38;5;" + strconv.Itoa(idx) + "m" }
+func (ansiStyler) bold() string      { return "\x1b[1m" }
+func (ansiStyler) dim() string       { return "\x1b[2m" }
+func (ansiStyler) reset() string     { return "\x1b[0m" }
+
+// paletteIndex picks a stable palette entry from the username hash.
+func paletteIndex(user string) int {
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(user))
-	return "colour" + strconv.Itoa(palette[int(h.Sum32())%len(palette)])
+	return palette[int(h.Sum32())%len(palette)]
+}
+
+// colour is the tmux colour token for a user, retained for callers and tests
+// that want the tmux dialect directly.
+func colour(user string) string {
+	return "colour" + strconv.Itoa(paletteIndex(user))
 }
 
 // highest returns the loudest poker's name, used to colour the icon.
