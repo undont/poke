@@ -7,8 +7,8 @@ desktop notification, scaled by an urgency level. no slack, no browser.
 three artifacts from one go binary set:
 
 - **`poke`** — the cli. ephemeral: `connect`, `<user>`, `clear`, `who`, `dnd`,
-  `render`. talks only to the local daemon over a unix socket (`render` reads
-  the peers file directly).
+  `name`, `secret`, `render`. talks only to the local daemon over a unix socket
+  (`name`/`secret`/`render` act on local config and files directly).
 - **`poked`** — the per-machine daemon. holds the relay connection, tracks
   presence, and on an incoming poke writes the tmux alert surface and rings the
   bell.
@@ -63,19 +63,27 @@ make help           # list every target
 
 ## Running
 
-every machine shares one secret, set as `POKE_SECRET`. on one always-on box run
-the relay (`poked --relay`); everywhere else run the daemon.
+every machine shares one secret. set it (and your display name) from the cli;
+both persist to `$XDG_CONFIG_HOME/poke/config` (mode 0600). `poke secret` prompts
+on a terminal or reads stdin, like `gh secret set`, and never echoes the value.
 
 ```sh
-export POKE_SECRET=your-team-secret   # same on every machine
+poke secret                       # prompts; or: echo "$SECRET" | poke secret
+poke name sean                    # your display name (defaults to $USER)
 
-# the always-on box
-poked --relay
-
-# each dev machine: start the daemon (poke connect starts it if it is not up)
-poke connect
+poke connect                      # starts the daemon if it is not up
 poke alice high "prod is down"
 ```
+
+a relay is optional: with no relay on the network the daemon delivers directly
+peer-to-peer (live-only). run one if you want durable offline queueing:
+
+```sh
+poked --relay                     # on a box that stays on
+```
+
+`POKE_SECRET` / `POKE_USER` environment variables still work and take precedence
+over the config file, which is handy for testing or login items.
 
 for the daemon to be up before you think to run `poke connect`, install the
 login item for your platform: `examples/launchd/com.poke.poked.plist` (macOS) or

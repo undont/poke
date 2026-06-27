@@ -31,10 +31,15 @@ func run(args []string) error {
 		return err
 	}
 
-	// render reads the peers file directly: status-right runs on every refresh
-	// and must not depend on the daemon socket being up.
-	if args[0] == "render" {
+	// these touch local config or files directly, no daemon round-trip.
+	switch args[0] {
+	case "render":
+		// status-right runs on every refresh; must not depend on the socket.
 		return renderSegment(cfg)
+	case "name":
+		return setName(cfg, args[1:])
+	case "secret":
+		return setSecret(cfg, args[1:])
 	}
 
 	req, err := parse(args)
@@ -153,6 +158,8 @@ usage:
   poke clear                dismiss incoming pokes
   poke who                  show the live roster
   poke dnd [on|off]         toggle do-not-disturb
+  poke name [<name>]        show or set your display name
+  poke secret               set the shared team secret (prompts, or reads stdin)
   poke render               print the tmux status segment (for status-right)
 `)
 }

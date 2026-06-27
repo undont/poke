@@ -23,21 +23,25 @@ type Config struct {
 	QueueTTL   time.Duration // how long a relay holds a poke for an offline target
 }
 
-// Load assembles a Config from environment and sensible defaults.
+// Load assembles a Config from environment, the persistent config file, and
+// sensible defaults. for each value the environment wins, then the config file,
+// then a built-in default; this keeps env overrides handy for testing while the
+// config file holds what the user set with `poke name` / `poke secret`.
 func Load() (*Config, error) {
 	host, err := os.Hostname()
 	if err != nil {
 		host = "unknown"
 	}
+	file := loadFile()
 	c := &Config{
-		User:       firstNonEmpty(os.Getenv("POKE_USER"), os.Getenv("USER"), "unknown"),
+		User:       firstNonEmpty(os.Getenv("POKE_USER"), file["user"], os.Getenv("USER"), "unknown"),
 		Host:       host,
-		Secret:     os.Getenv("POKE_SECRET"),
+		Secret:     firstNonEmpty(os.Getenv("POKE_SECRET"), file["secret"]),
 		SocketPath: socketPath(),
 		PeersFile:  peersFile(),
 		StateDir:   stateDir(),
-		RelayAddr:  os.Getenv("POKE_RELAY_ADDR"),
-		Icon:       os.Getenv("POKE_ICON"),
+		RelayAddr:  firstNonEmpty(os.Getenv("POKE_RELAY_ADDR"), file["relay_addr"]),
+		Icon:       firstNonEmpty(os.Getenv("POKE_ICON"), file["icon"]),
 		QueueTTL:   queueTTL(),
 	}
 	return c, nil
