@@ -152,7 +152,7 @@ func (r *Relay) handshake(ctx context.Context, conn transport.Conn) (*client, er
 	if err := c.send(ctx, welcome); err != nil {
 		return nil, err
 	}
-	r.broadcast(ctx, protocol.Presence{Type: protocol.TypePresence, User: c.user, Online: true}, c.user)
+	r.broadcast(ctx, protocol.Presence{Type: protocol.TypePresence, User: c.user, Host: c.host, Online: true}, c.user)
 	r.drainTo(ctx, c)
 	return c, nil
 }

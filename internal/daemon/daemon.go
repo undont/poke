@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"sort"
 	"sync"
 	"time"
 
@@ -46,8 +47,7 @@ type Daemon struct {
 
 	mu      sync.Mutex
 	conn    transport.Conn
-	roster  []protocol.RosterEntry
-	online  map[string]bool
+	peerSet map[string]protocol.RosterEntry // currently-online peers, keyed by user
 	pending map[string]chan outcome
 	dnd     bool
 }
@@ -60,7 +60,7 @@ func New(cfg *config.Config, log *slog.Logger) *Daemon {
 		peers:   peersfile.New(cfg.PeersFile),
 		dialer:  transport.NewDialer(),
 		browser: discovery.NewBrowser(),
-		online:  make(map[string]bool),
+		peerSet: make(map[string]protocol.RosterEntry),
 		pending: make(map[string]chan outcome),
 	}
 }
@@ -101,6 +101,7 @@ func (d *Daemon) connectLoop(ctx context.Context) {
 			d.log.Info("relay session ended", "err", err)
 		}
 		d.setConn(nil)
+		d.setRoster(nil) // the roster is unknown while disconnected
 		d.sleep(ctx, backoff)
 		backoff = next(backoff)
 	}
@@ -179,7 +180,7 @@ func (d *Daemon) handleFrame(frame []byte) {
 	case protocol.TypePresence:
 		var pr protocol.Presence
 		if err := json.Unmarshal(frame, &pr); err == nil {
-			d.setOnline(pr.User, pr.Online)
+			d.setPresence(pr)
 		}
 	}
 }
@@ -273,13 +274,15 @@ func (d *Daemon) handlePoke(req protocol.IPCRequest) protocol.IPCResponse {
 func (d *Daemon) handleWho() protocol.IPCResponse {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	online := make([]string, 0, len(d.online))
-	for u, on := range d.online {
-		if on {
-			online = append(online, u)
+	out := make([]protocol.RosterEntry, 0, len(d.peerSet))
+	for _, e := range d.peerSet {
+		if e.User == d.cfg.User {
+			continue // don't list yourself
 		}
+		out = append(out, e)
 	}
-	return protocol.IPCResponse{OK: true, Roster: d.roster, Online: online}
+	sort.Slice(out, func(i, j int) bool { return out[i].User < out[j].User })
+	return protocol.IPCResponse{OK: true, Roster: out}
 }
 
 func (d *Daemon) handleDND(req protocol.IPCRequest) protocol.IPCResponse {
@@ -308,18 +311,26 @@ func (d *Daemon) getConn() transport.Conn {
 
 func (d *Daemon) connected() bool { return d.getConn() != nil }
 
+// setRoster replaces the peer set from a welcome snapshot. a nil roster clears
+// it, which is what a dropped relay connection should do.
 func (d *Daemon) setRoster(r []protocol.RosterEntry) {
 	d.mu.Lock()
-	d.roster = r
+	d.peerSet = make(map[string]protocol.RosterEntry, len(r))
 	for _, e := range r {
-		d.online[e.User] = true
+		d.peerSet[e.User] = e
 	}
 	d.mu.Unlock()
 }
 
-func (d *Daemon) setOnline(user string, on bool) {
+// setPresence keeps the peer set current: a peer coming online is added with
+// its host, one going offline is removed.
+func (d *Daemon) setPresence(pr protocol.Presence) {
 	d.mu.Lock()
-	d.online[user] = on
+	if pr.Online {
+		d.peerSet[pr.User] = protocol.RosterEntry{User: pr.User, Host: pr.Host}
+	} else {
+		delete(d.peerSet, pr.User)
+	}
 	d.mu.Unlock()
 }
 

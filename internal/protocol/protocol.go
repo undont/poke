@@ -90,10 +90,12 @@ type QueuedNotice struct {
 	ID   string `json:"id"`
 }
 
-// Presence is broadcast on roster changes.
+// Presence is broadcast on roster changes. Host is set when a peer comes
+// online so late joiners can be added to the roster, and omitted when it leaves.
 type Presence struct {
 	Type   string `json:"type"`
 	User   string `json:"user"`
+	Host   string `json:"host,omitempty"`
 	Online bool   `json:"online"`
 }
 

@@ -36,7 +36,6 @@ type IPCResponse struct {
 	Error   string        `json:"error,omitempty"`
 	Mode    DeliveryMode  `json:"mode,omitempty"`
 	Roster  []RosterEntry `json:"roster,omitempty"`
-	Online  []string      `json:"online,omitempty"`
 	DND     *bool         `json:"dnd,omitempty"`
 	Message string        `json:"message,omitempty"`
 }

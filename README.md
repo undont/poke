@@ -23,10 +23,12 @@ the peers file and rings the bell. `poke render` paints a status-right segment
 (icon, stable per-user colour, urgency emphasis, `+N` overflow); see
 `examples/tmux.conf` for the status line and clear keybinding. a poke to an
 offline target is queued durably on the relay (bbolt) and drained in order when
-they reconnect, dropping anything past `POKE_QUEUE_TTL` (default 24h).
+they reconnect, dropping anything past `POKE_QUEUE_TTL` (default 24h). `poke
+who` shows the live roster, kept current as peers join and leave. every poke
+persists until you clear it; urgency drives only how loud the arrival is.
 
-not yet built: urgency persistence (high persisting until cleared), `seen`
-acks, presence-driven `who`, and the live-only fallback when no relay is up.
+not yet built: `seen` acks (delivered vs read), and the live-only peer-to-peer
+fallback when no relay is up.
 
 ## Install
 

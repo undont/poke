@@ -124,6 +124,10 @@ func printResp(req protocol.IPCRequest, resp protocol.IPCResponse) {
 	case protocol.IPCPoke:
 		fmt.Println(resp.Mode)
 	case protocol.IPCWho:
+		if len(resp.Roster) == 0 {
+			fmt.Fprintln(os.Stderr, "no peers online")
+			return
+		}
 		for _, e := range resp.Roster {
 			fmt.Printf("%s\t%s\n", e.User, e.Host)
 		}
