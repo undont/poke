@@ -189,7 +189,31 @@ func (r *Relay) dispatch(ctx context.Context, from *client, frame []byte) {
 			return
 		}
 		r.route(ctx, from, p)
+	case protocol.TypeAck:
+		var a protocol.Ack
+		if err := json.Unmarshal(frame, &a); err != nil {
+			return
+		}
+		r.routeAck(ctx, from, a)
 	}
+}
+
+// routeAck forwards a seen ack back to the original sender, stamping From with
+// the authenticated user so it cannot be spoofed. a sender who has gone offline
+// simply misses it.
+func (r *Relay) routeAck(ctx context.Context, from *client, a protocol.Ack) {
+	if a.To == "" {
+		return
+	}
+	r.mu.Lock()
+	target := r.clients[a.To]
+	r.mu.Unlock()
+	if target == nil {
+		return
+	}
+	a.From = from.user
+	a.To = ""
+	_ = target.send(ctx, a)
 }
 
 // route delivers a poke to a connected target, or queues it for an offline one.

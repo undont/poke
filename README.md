@@ -15,9 +15,9 @@ three artifacts from one go binary set:
 - **`poked --relay`** — the same binary in relay mode. one always-on box on the
   lan routes pokes and holds the offline queue.
 
-## Status
+## How it works
 
-phases 0, 1, and 3 land. a poke travels across machines end to end: the daemon
+a poke travels across machines end to end: the daemon
 finds the relay over mDNS, dials it over a websocket, and on delivery writes
 the peers file and rings the bell. `poke render` paints a status-right segment
 (icon, stable per-user colour, urgency emphasis, `+N` overflow); see
@@ -33,7 +33,9 @@ while both peers are online (no durable queue without a relay), and the cli
 reports the mode it used (`delivered` / `queued` / `live-only`) so the sender is
 never misled about durability.
 
-not yet built: `seen` acks (delivered vs read).
+clearing a poke acknowledges it: the recipient's daemon sends a seen ack back
+to the sender (via the relay), who gets a "saw your poke" notification. the
+sender's poke already reported `delivered`; seen arrives later, when they look.
 
 ## Install
 

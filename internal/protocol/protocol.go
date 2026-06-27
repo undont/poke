@@ -77,11 +77,16 @@ type Poked struct {
 	TS       int64    `json:"ts"`
 }
 
-// Ack reports delivery/seen back to the sender.
+// Ack reports delivery/seen back to the sender. a delivery ack (seen false) is
+// sent by the relay or peer as soon as a poke lands on the recipient daemon. a
+// seen ack (seen true) is emitted when the recipient clears the poke; From is
+// the recipient and To routes it back to the original sender.
 type Ack struct {
 	Type string `json:"type"`
 	ID   string `json:"id"`
 	Seen bool   `json:"seen"`
+	From string `json:"from,omitempty"`
+	To   string `json:"to,omitempty"`
 }
 
 // QueuedNotice tells the sender its poke was stored for an offline target.

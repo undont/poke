@@ -245,7 +245,11 @@ func (d *Daemon) handleFrame(frame []byte) {
 	case protocol.TypeAck:
 		var a protocol.Ack
 		if err := json.Unmarshal(frame, &a); err == nil {
-			d.resolve(a.ID, outcome{mode: protocol.Delivered})
+			if a.Seen {
+				d.onSeen(a.From)
+			} else {
+				d.resolve(a.ID, outcome{mode: protocol.Delivered})
+			}
 		}
 	case protocol.TypeQueued:
 		var qd protocol.QueuedNotice
@@ -288,6 +292,44 @@ func (d *Daemon) deliver(p protocol.Poked) {
 	}
 }
 
+// emitSeen acks every live poke back to its sender when the user clears, one
+// ack per distinct sender. it needs the relay to route acks, so in live-only
+// mode (no relay connection) seen reporting is skipped.
+func (d *Daemon) emitSeen() {
+	conn := d.getConn()
+	if conn == nil {
+		return
+	}
+	entries, err := peersfile.Read(d.cfg.PeersFile)
+	if err != nil {
+		return
+	}
+	sent := make(map[string]bool)
+	for _, e := range entries {
+		if e.From == "" || e.From == d.cfg.User || sent[e.From] {
+			continue
+		}
+		sent[e.From] = true
+		_ = writeFrame(context.Background(), conn, protocol.Ack{
+			Type: protocol.TypeAck, ID: e.ID, Seen: true, To: e.From,
+		})
+	}
+}
+
+// onSeen surfaces that a poke this machine sent was acknowledged.
+func (d *Daemon) onSeen(from string) {
+	if from == "" {
+		return
+	}
+	d.log.Info("poke seen", "by", from)
+	d.mu.Lock()
+	dnd := d.dnd
+	d.mu.Unlock()
+	if !dnd {
+		_ = tmux.Notify("poke seen", from+" saw your poke")
+	}
+}
+
 // handle answers one CLI request.
 func (d *Daemon) handle(req protocol.IPCRequest) protocol.IPCResponse {
 	switch req.Verb {
@@ -299,6 +341,7 @@ func (d *Daemon) handle(req protocol.IPCRequest) protocol.IPCResponse {
 	case protocol.IPCPoke:
 		return d.handlePoke(req)
 	case protocol.IPCClear:
+		d.emitSeen() // tell senders their pokes were acknowledged, before clearing
 		if err := d.peers.Clear(); err != nil {
 			return protocol.IPCResponse{OK: false, Error: err.Error()}
 		}
