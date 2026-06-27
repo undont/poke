@@ -6,9 +6,9 @@ desktop notification, scaled by an urgency level. no slack, no browser.
 
 three artifacts from one go binary set:
 
-- **`poke`** — the cli. ephemeral: `connect`, `<user>`, `clear`, `who`, `dnd`,
-  `name`, `secret`, `render`. talks only to the local daemon over a unix socket
-  (`name`/`secret`/`render` act on local config and files directly).
+- **`poke`** — the cli. ephemeral: `connect`, `disconnect`, `<user>`, `clear`,
+  `who`, `dnd`, `name`, `secret`, `render`. talks only to the local daemon over a
+  unix socket (`name`/`secret`/`render` act on local config and files directly).
 - **`poked`** — the per-machine daemon. holds the relay connection, tracks
   presence, and on an incoming poke writes the tmux alert surface and rings the
   bell.

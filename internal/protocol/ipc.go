@@ -5,11 +5,12 @@ package protocol
 
 // IPC verbs
 const (
-	IPCConnect = "connect"
-	IPCPoke    = "poke"
-	IPCClear   = "clear"
-	IPCWho     = "who"
-	IPCDND     = "dnd"
+	IPCConnect    = "connect"
+	IPCDisconnect = "disconnect"
+	IPCPoke       = "poke"
+	IPCClear      = "clear"
+	IPCWho        = "who"
+	IPCDND        = "dnd"
 )
 
 // IPCRequest is one CLI invocation.

@@ -51,6 +51,8 @@ type Daemon struct {
 	browser discovery.Browser
 	adv     discovery.Advertiser
 
+	cancel context.CancelFunc // stops the daemon, set in Run
+
 	mu      sync.Mutex
 	conn    transport.Conn
 	peerSet map[string]protocol.RosterEntry // currently-online peers, keyed by user
@@ -75,6 +77,10 @@ func New(cfg *config.Config, log *slog.Logger) *Daemon {
 // Run binds the unix socket, advertises and serves direct peer connections,
 // drives the relay connection, and serves the CLI until ctx is cancelled.
 func (d *Daemon) Run(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	d.cancel = cancel
+
 	srv, err := ipc.Listen(d.cfg.SocketPath)
 	if err != nil {
 		return err
@@ -338,6 +344,13 @@ func (d *Daemon) handle(req protocol.IPCRequest) protocol.IPCResponse {
 			return protocol.IPCResponse{OK: true, Message: "connected"}
 		}
 		return protocol.IPCResponse{OK: true, Message: "starting; searching for relay"}
+	case protocol.IPCDisconnect:
+		// stop shortly after replying so the cli gets its response first
+		go func() {
+			time.Sleep(150 * time.Millisecond)
+			d.cancel()
+		}()
+		return protocol.IPCResponse{OK: true, Message: "stopping"}
 	case protocol.IPCPoke:
 		return d.handlePoke(req)
 	case protocol.IPCClear:

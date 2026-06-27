@@ -56,6 +56,11 @@ func run(args []string) error {
 
 	resp, err := ipc.Send(cfg.SocketPath, req)
 	if err != nil {
+		// stopping something that is not running is not a failure.
+		if req.Verb == protocol.IPCDisconnect {
+			fmt.Println("not running")
+			return nil
+		}
 		return fmt.Errorf("daemon unreachable (%w); is `poked` running?", err)
 	}
 	if !resp.OK {
@@ -80,6 +85,8 @@ func parse(args []string) (protocol.IPCRequest, error) {
 	switch args[0] {
 	case "connect":
 		return protocol.IPCRequest{Verb: protocol.IPCConnect}, nil
+	case "disconnect":
+		return protocol.IPCRequest{Verb: protocol.IPCDisconnect}, nil
 	case "clear":
 		return protocol.IPCRequest{Verb: protocol.IPCClear}, nil
 	case "who":
@@ -172,6 +179,7 @@ func usage() {
 
 usage:
   poke connect              ensure the daemon is up, announce presence
+  poke disconnect           stop the daemon
   poke <user> [note] [--low|--medium|--high]    urgency may go anywhere, default medium
   poke clear                dismiss incoming pokes
   poke who                  show the live roster
