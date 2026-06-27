@@ -10,17 +10,33 @@ import (
 // defaultQueueTTL is how long a poke lingers for an offline target.
 const defaultQueueTTL = 24 * time.Hour
 
+// defaultRelayListen is the relay's stable listen address. a fixed port (rather
+// than an ephemeral :0) is what lets a daemon dial a relay by a configured
+// address without mDNS, the precondition for the off-LAN expansion.
+const defaultRelayListen = ":7373"
+
+// notification surfaces. tmux is the ambient status-bar surface; desktop makes
+// an OS notification the primary cue; auto picks tmux when a server is up and
+// desktop otherwise.
+const (
+	SurfaceTmux    = "tmux"
+	SurfaceDesktop = "desktop"
+	SurfaceAuto    = "auto"
+)
+
 // Config is the resolved daemon/CLI configuration.
 type Config struct {
-	User       string        // self-claimed username, defaults to $USER
-	Host       string        // os hostname
-	Secret     string        // shared team secret, never logged
-	SocketPath string        // CLI <-> daemon unix socket
-	PeersFile  string        // tmux alert surface for incoming pokes
-	StateDir   string        // logs and durable daemon state
-	RelayAddr  string        // optional fixed relay address, empty means mDNS
-	Icon       string        // status-bar glyph for incoming pokes, empty means default
-	QueueTTL   time.Duration // how long a relay holds a poke for an offline target
+	User        string        // self-claimed username, defaults to $USER
+	Host        string        // os hostname
+	Secret      string        // shared team secret, never logged
+	SocketPath  string        // CLI <-> daemon unix socket
+	PeersFile   string        // tmux alert surface for incoming pokes
+	StateDir    string        // logs and durable daemon state
+	RelayAddr   string        // optional fixed relay address, empty means mDNS
+	RelayListen string        // relay mode: address to listen on, defaults to :7373
+	Icon        string        // status-bar glyph for incoming pokes, empty means default
+	Surface     string        // how an incoming poke is surfaced: tmux, desktop, auto
+	QueueTTL    time.Duration // how long a relay holds a poke for an offline target
 }
 
 // Load assembles a Config from environment, the persistent config file, and
@@ -34,17 +50,31 @@ func Load() (*Config, error) {
 	}
 	file := loadFile()
 	c := &Config{
-		User:       firstNonEmpty(os.Getenv("POKE_USER"), file["user"], os.Getenv("USER"), "unknown"),
-		Host:       host,
-		Secret:     firstNonEmpty(os.Getenv("POKE_SECRET"), file["secret"]),
-		SocketPath: socketPath(),
-		PeersFile:  peersFile(),
-		StateDir:   stateDir(),
-		RelayAddr:  firstNonEmpty(os.Getenv("POKE_RELAY_ADDR"), file["relay_addr"]),
-		Icon:       firstNonEmpty(os.Getenv("POKE_ICON"), file["icon"]),
-		QueueTTL:   queueTTL(),
+		User:        firstNonEmpty(os.Getenv("POKE_USER"), file["user"], os.Getenv("USER"), "unknown"),
+		Host:        host,
+		Secret:      firstNonEmpty(os.Getenv("POKE_SECRET"), file["secret"]),
+		SocketPath:  socketPath(),
+		PeersFile:   peersFile(),
+		StateDir:    stateDir(),
+		RelayAddr:   firstNonEmpty(os.Getenv("POKE_RELAY_ADDR"), file["relay_addr"]),
+		RelayListen: firstNonEmpty(os.Getenv("POKE_RELAY_LISTEN"), file["relay_listen"], defaultRelayListen),
+		Icon:        firstNonEmpty(os.Getenv("POKE_ICON"), file["icon"]),
+		Surface:     surface(firstNonEmpty(os.Getenv("POKE_SURFACE"), file["surface"])),
+		QueueTTL:    queueTTL(),
 	}
 	return c, nil
+}
+
+// surface normalises a configured surface value, falling back to tmux for an
+// empty or unrecognised one so a typo degrades to the default rather than
+// silently disabling cues.
+func surface(v string) string {
+	switch v {
+	case SurfaceDesktop, SurfaceAuto, SurfaceTmux:
+		return v
+	default:
+		return SurfaceTmux
+	}
 }
 
 // queueTTL reads POKE_QUEUE_TTL (a Go duration like "12h"), falling back to the

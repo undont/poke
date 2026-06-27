@@ -35,11 +35,13 @@ func run(args []string) error {
 	switch args[0] {
 	case "render":
 		// status-right runs on every refresh; must not depend on the socket.
-		return renderSegment(cfg)
+		return renderSegment(cfg, args[1:])
 	case "name":
 		return setName(cfg, args[1:])
 	case "secret":
 		return setSecret(cfg, args[1:])
+	case "surface":
+		return setSurface(cfg, args[1:])
 	}
 
 	req, err := parse(args)
@@ -70,13 +72,25 @@ func run(args []string) error {
 	return nil
 }
 
-// renderSegment prints the tmux status-right segment for the live pokes.
-func renderSegment(cfg *config.Config) error {
+// renderSegment prints the status segment for the live pokes, in tmux markup by
+// default or plain ANSI with --format=ansi for a shell prompt or status bar.
+func renderSegment(cfg *config.Config, args []string) error {
+	format := render.FormatTmux
+	for _, a := range args {
+		switch a {
+		case "--format=ansi":
+			format = render.FormatANSI
+		case "--format=tmux":
+			format = render.FormatTmux
+		default:
+			return fmt.Errorf("unknown flag %q (use --format=ansi|tmux)", a)
+		}
+	}
 	entries, err := peersfile.Read(cfg.PeersFile)
 	if err != nil {
 		return err
 	}
-	fmt.Print(render.Segment(entries, render.Options{Icon: cfg.Icon}))
+	fmt.Print(render.Segment(entries, render.Options{Icon: cfg.Icon, Format: format}))
 	return nil
 }
 
@@ -186,6 +200,7 @@ usage:
   poke dnd [on|off]         toggle do-not-disturb
   poke name [<name>]        show or set your display name
   poke secret [--generate]  set the shared team secret (prompts/stdin; --generate mints + copies one)
-  poke render               print the tmux status segment (for status-right)
+  poke surface [<surface>]  show or set the notification surface (tmux|desktop|auto)
+  poke render [--format=ansi|tmux]  print the status segment (tmux status-right, or ansi for a prompt/bar)
 `)
 }

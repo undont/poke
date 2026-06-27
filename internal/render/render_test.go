@@ -38,6 +38,25 @@ func TestSegmentEmphasis(t *testing.T) {
 	}
 }
 
+func TestSegmentANSI(t *testing.T) {
+	seg := Segment([]peersfile.Entry{entry("alice", protocol.High)}, Options{Icon: "B", Format: FormatANSI})
+	if strings.Contains(seg, "#[") {
+		t.Fatalf("ansi format must not emit tmux markup: %q", seg)
+	}
+	if !strings.Contains(seg, "\x1b[1m") {
+		t.Fatalf("high urgency should be bold (ansi): %q", seg)
+	}
+	if !strings.Contains(seg, "\x1b[38;5;") {
+		t.Fatalf("name should carry a 256-colour fg (ansi): %q", seg)
+	}
+	if !strings.Contains(seg, "\x1b[0m") {
+		t.Fatalf("ansi segment should reset: %q", seg)
+	}
+	if !strings.Contains(seg, "alice") {
+		t.Fatalf("name missing: %q", seg)
+	}
+}
+
 func TestSegmentOverflow(t *testing.T) {
 	es := []peersfile.Entry{
 		entry("ann", protocol.Low), entry("bob", protocol.Low),

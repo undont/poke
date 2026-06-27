@@ -33,6 +33,31 @@ type Browser interface {
 	Close() error
 }
 
+// RelayLocator yields a dialable relay endpoint. it is the discovery tier seam:
+// mDNS browses the LAN, a fixed locator returns a configured address and skips
+// discovery entirely. the tailnet tier slots in here as a third implementation.
+type RelayLocator interface {
+	// Locate blocks until a relay endpoint is known or ctx is done.
+	Locate(ctx context.Context) (Relay, error)
+}
+
+// NewMDNSLocator locates the relay by browsing mDNS on the LAN.
+func NewMDNSLocator(b Browser) RelayLocator { return mdnsLocator{b} }
+
+// NewFixedLocator returns a locator that always yields addr without any
+// discovery, used when relay_addr is configured.
+func NewFixedLocator(addr string) RelayLocator { return fixedLocator{addr} }
+
+type mdnsLocator struct{ b Browser }
+
+func (m mdnsLocator) Locate(ctx context.Context) (Relay, error) { return m.b.FindRelay(ctx) }
+
+type fixedLocator struct{ addr string }
+
+func (f fixedLocator) Locate(context.Context) (Relay, error) {
+	return Relay{Host: f.addr, Addr: f.addr}, nil
+}
+
 // Advertiser publishes this node's presence on the network.
 type Advertiser interface {
 	// Advertise announces the service on port until Close or ctx is done.

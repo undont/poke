@@ -16,6 +16,7 @@ import (
 	"github.com/undont/poke/internal/discovery"
 	"github.com/undont/poke/internal/id"
 	"github.com/undont/poke/internal/ipc"
+	"github.com/undont/poke/internal/notify"
 	"github.com/undont/poke/internal/peersfile"
 	"github.com/undont/poke/internal/protocol"
 	"github.com/undont/poke/internal/tmux"
@@ -49,6 +50,7 @@ type Daemon struct {
 	peers   *peersfile.Writer
 	dialer  transport.Dialer
 	browser discovery.Browser
+	locator discovery.RelayLocator
 	adv     discovery.Advertiser
 
 	cancel context.CancelFunc // stops the daemon, set in Run
@@ -60,9 +62,11 @@ type Daemon struct {
 	dnd     bool
 }
 
-// New constructs a Daemon from resolved config.
+// New constructs a Daemon from resolved config. a configured relay_addr selects
+// the fixed-address discovery tier (no mDNS); otherwise the daemon browses the
+// LAN for a relay.
 func New(cfg *config.Config, log *slog.Logger) *Daemon {
-	return &Daemon{
+	d := &Daemon{
 		cfg:     cfg,
 		log:     log,
 		peers:   peersfile.New(cfg.PeersFile),
@@ -72,6 +76,12 @@ func New(cfg *config.Config, log *slog.Logger) *Daemon {
 		peerSet: make(map[string]protocol.RosterEntry),
 		pending: make(map[string]chan outcome),
 	}
+	if cfg.RelayAddr != "" {
+		d.locator = discovery.NewFixedLocator(cfg.RelayAddr)
+	} else {
+		d.locator = discovery.NewMDNSLocator(d.browser)
+	}
+	return d
 }
 
 // Run binds the unix socket, advertises and serves direct peer connections,
@@ -168,13 +178,13 @@ func (d *Daemon) servePeer(ctx context.Context, conn transport.Conn) {
 	}
 }
 
-// connectLoop looks for a relay each cycle; finding one it runs a relay session,
+// connectLoop locates a relay each cycle; finding one it runs a relay session,
 // otherwise it stays in live-only mode and re-checks later. while there is no
 // relay connection, pokes are delivered directly peer-to-peer.
 func (d *Daemon) connectLoop(ctx context.Context) {
 	for ctx.Err() == nil {
 		findCtx, cancel := context.WithTimeout(ctx, relaySearch)
-		relay, err := d.browser.FindRelay(findCtx)
+		relay, err := d.locator.Locate(findCtx)
 		cancel()
 		if err != nil {
 			if ctx.Err() != nil {
@@ -189,8 +199,18 @@ func (d *Daemon) connectLoop(ctx context.Context) {
 		}
 		d.setConn(nil)
 		d.setRoster(nil) // the roster is unknown while disconnected
-		d.sleep(ctx, backoffMin)
+		d.sleep(ctx, d.reconnectDelay())
 	}
+}
+
+// reconnectDelay paces reconnection. with mDNS, re-browsing already throttles
+// the loop, so a short pause suffices; with a fixed address Locate returns
+// instantly, so back off longer to avoid spinning on an unreachable relay.
+func (d *Daemon) reconnectDelay() time.Duration {
+	if d.cfg.RelayAddr != "" {
+		return relayRetry
+	}
+	return backoffMin
 }
 
 // session dials, completes the handshake, and pumps frames until it drops.
@@ -275,7 +295,9 @@ func (d *Daemon) handleFrame(frame []byte) {
 	}
 }
 
-// deliver applies the urgency behaviour for an incoming poke.
+// deliver records an incoming poke and fires the recipient's chosen cue. the
+// peers file is written regardless of surface (it is the single source of truth
+// for live pokes); only the cue differs between the tmux and desktop surfaces.
 func (d *Daemon) deliver(p protocol.Poked) {
 	e := peersfile.Entry{
 		From: p.From, Strength: p.Strength, TS: p.TS, ID: p.ID, Note: p.Note,
@@ -287,15 +309,50 @@ func (d *Daemon) deliver(p protocol.Poked) {
 	dnd := d.dnd
 	d.mu.Unlock()
 	if dnd {
+		return // recorded for when you look, but no active cue
+	}
+	if d.surface() == config.SurfaceDesktop {
+		d.deliverDesktop(p)
 		return
 	}
+	d.deliverTmux(p)
+}
+
+// deliverTmux is the ambient status-bar surface: the bell reaches every attached
+// client for medium and high, and high additionally raises a desktop
+// notification. low is silent, surfaced only by the status segment.
+func (d *Daemon) deliverTmux(p protocol.Poked) {
 	switch p.Strength {
 	case protocol.High:
 		_ = tmux.Bell()
-		_ = tmux.Notify("poke from "+p.From, p.Note)
+		_ = notify.Send("poke from "+p.From, p.Note, notify.Critical)
 	case protocol.Medium:
 		_ = tmux.Bell()
 	}
+}
+
+// deliverDesktop makes the OS notification the primary cue, with no tmux
+// dependency: medium notifies at normal priority, high at critical. low is
+// recorded only.
+func (d *Daemon) deliverDesktop(p protocol.Poked) {
+	switch p.Strength {
+	case protocol.High:
+		_ = notify.Send("poke from "+p.From, p.Note, notify.Critical)
+	case protocol.Medium:
+		_ = notify.Send("poke from "+p.From, p.Note, notify.Normal)
+	}
+}
+
+// surface resolves the configured notification surface, collapsing auto to tmux
+// when a tmux server is up and desktop otherwise.
+func (d *Daemon) surface() string {
+	if d.cfg.Surface == config.SurfaceAuto {
+		if tmux.Running() {
+			return config.SurfaceTmux
+		}
+		return config.SurfaceDesktop
+	}
+	return d.cfg.Surface
 }
 
 // emitSeen acks every live poke back to its sender when the user clears, one
@@ -332,7 +389,7 @@ func (d *Daemon) onSeen(from string) {
 	dnd := d.dnd
 	d.mu.Unlock()
 	if !dnd {
-		_ = tmux.Notify("poke seen", from+" saw your poke")
+		_ = notify.Send("poke seen", from+" saw your poke", notify.Normal)
 	}
 }
 

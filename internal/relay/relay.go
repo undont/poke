@@ -75,7 +75,10 @@ func (r *Relay) Run(ctx context.Context) error {
 	r.queue = q
 	defer q.Close()
 
-	ln, err := net.Listen("tcp", ":0")
+	// a stable listen address (not an ephemeral :0) is what lets a daemon reach
+	// the relay by a configured address without mDNS; the bound port is still
+	// advertised so LAN discovery is unchanged.
+	ln, err := net.Listen("tcp", r.cfg.RelayListen)
 	if err != nil {
 		return err
 	}
@@ -88,7 +91,7 @@ func (r *Relay) Run(ctx context.Context) error {
 
 	l := transport.Listen(ln)
 	defer l.Close()
-	r.log.Info("relay listening", "port", port, "user", r.cfg.User)
+	r.log.Info("relay listening", "addr", ln.Addr().String(), "user", r.cfg.User)
 
 	for {
 		conn, err := l.Accept(ctx)

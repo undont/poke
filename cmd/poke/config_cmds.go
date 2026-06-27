@@ -35,6 +35,27 @@ func setName(cfg *config.Config, args []string) error {
 	return nil
 }
 
+// setSurface prints the current notification surface, or persists a new one.
+func setSurface(cfg *config.Config, args []string) error {
+	if len(args) == 0 {
+		fmt.Println(cfg.Surface)
+		return nil
+	}
+	s := args[0]
+	if err := config.ValidateSurface(s); err != nil {
+		return err
+	}
+	if err := config.SetValue("surface", s); err != nil {
+		return err
+	}
+	fmt.Printf("surface set to %s\n", s)
+	if os.Getenv("POKE_SURFACE") != "" {
+		fmt.Fprintln(os.Stderr, "note: POKE_SURFACE is set and overrides the config file")
+	}
+	nudgeRestart(cfg)
+	return nil
+}
+
 // setSecret stores the shared team secret in the config file. with --generate
 // it mints a strong secret and copies it to the clipboard; otherwise, like `gh
 // secret set`, it reads from a hidden prompt on a terminal or from stdin when

@@ -1,11 +1,20 @@
-// package tmux carries the OS-level cues: ring the bell on attached clients
-// and raise a desktop notification for high-urgency pokes.
+// package tmux carries the tmux-specific cue: ring the bell on every attached
+// client. desktop notifications live in the notify package, which is surface
+// agnostic.
 package tmux
 
 import (
 	"os/exec"
 	"strings"
 )
+
+// Running reports whether a tmux server is up, used by the `auto` surface to
+// pick tmux when one is present and fall back to desktop otherwise. a live
+// `tmux list-clients` exits zero whenever a server exists, even with no clients
+// attached.
+func Running() bool {
+	return exec.Command("tmux", "list-clients").Run() == nil
+}
 
 // Bell writes \a to every attached client's tty rather than to the origin
 // pane, so the cue reaches the recipient wherever they are attached without
@@ -24,14 +33,6 @@ func Bell() error {
 
 func writeBell(tty string) error {
 	return exec.Command("sh", "-c", "printf '\\a' > "+shellQuote(tty)).Run()
-}
-
-// Notify raises a desktop notification via terminal-notifier when present.
-func Notify(title, message string) error {
-	if _, err := exec.LookPath("terminal-notifier"); err != nil {
-		return nil
-	}
-	return exec.Command("terminal-notifier", "-title", title, "-message", message).Run()
 }
 
 func shellQuote(s string) string {
