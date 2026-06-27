@@ -1,58 +1,241 @@
 // package relay is the same binary in relay mode: one always-on box that
-// authenticates daemons, holds the roster, and routes (or later queues) pokes.
-//
-// the accept loop and routing are stubbed pending a real transport.
+// authenticates daemons, holds the live roster, and routes pokes. phase 0
+// forwards to connected targets only; the offline queue lands later.
 package relay
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
+	"net"
 	"sync"
+	"time"
 
 	"github.com/undont/poke/internal/config"
+	"github.com/undont/poke/internal/discovery"
 	"github.com/undont/poke/internal/protocol"
+	"github.com/undont/poke/internal/transport"
+	"github.com/undont/poke/internal/version"
 )
+
+// handshakeTimeout bounds how long a new connection has to send its hello.
+const handshakeTimeout = 5 * time.Second
+
+// client is one connected daemon.
+type client struct {
+	user string
+	host string
+	conn transport.Conn
+	mu   sync.Mutex // serialises writes to conn
+}
+
+func (c *client) send(ctx context.Context, v any) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.conn.WriteFrame(ctx, b)
+}
 
 // Relay is the running relay process.
 type Relay struct {
 	cfg *config.Config
 	log *slog.Logger
+	adv discovery.Advertiser
 
-	mu     sync.Mutex
-	roster map[string]protocol.RosterEntry // user -> entry
+	mu      sync.Mutex
+	clients map[string]*client // user -> client
 }
 
 // New constructs a Relay from resolved config.
 func New(cfg *config.Config, log *slog.Logger) *Relay {
 	return &Relay{
-		cfg:    cfg,
-		log:    log,
-		roster: make(map[string]protocol.RosterEntry),
+		cfg:     cfg,
+		log:     log,
+		adv:     discovery.NewAdvertiser(),
+		clients: make(map[string]*client),
 	}
 }
 
-// Run advertises the relay and serves daemons until ctx is cancelled.
+// Run binds an ephemeral port, advertises it over mDNS, and serves daemons
+// until ctx is cancelled.
 func (r *Relay) Run(ctx context.Context) error {
-	r.log.Info("relay starting", "user", r.cfg.User, "host", r.cfg.Host)
-
-	// TODO: advertise relay=1 over mDNS, accept daemon connections, validate
-	// HELLO against the shared secret, then route POKE frames to a connected
-	// target or enqueue for an offline one.
-
-	<-ctx.Done()
-	return ctx.Err()
-}
-
-// route would forward a poke to its target or enqueue it. defined now so the
-// routing surface is explicit.
-func (r *Relay) route(p protocol.Poke) error {
-	r.mu.Lock()
-	_, online := r.roster[p.To]
-	r.mu.Unlock()
-	if online {
-		// TODO: forward as a protocol.Poked frame to the target connection
-		return nil
+	ln, err := net.Listen("tcp", ":0")
+	if err != nil {
+		return err
 	}
-	// TODO: enqueue for offline delivery once the queue lands
-	return nil
+	port := ln.Addr().(*net.TCPAddr).Port
+
+	if err := r.adv.Advertise(ctx, r.cfg.User, true, port); err != nil {
+		r.log.Warn("mdns advertise failed", "err", err)
+	}
+	defer r.adv.Close()
+
+	l := transport.Listen(ln)
+	defer l.Close()
+	r.log.Info("relay listening", "port", port, "user", r.cfg.User)
+
+	for {
+		conn, err := l.Accept(ctx)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			r.log.Warn("accept failed", "err", err)
+			continue
+		}
+		go r.serve(ctx, conn)
+	}
 }
+
+// serve runs one connection: handshake, then dispatch frames until it drops.
+func (r *Relay) serve(ctx context.Context, conn transport.Conn) {
+	c, err := r.handshake(ctx, conn)
+	if err != nil {
+		r.log.Info("handshake rejected", "err", err)
+		_ = conn.Close()
+		return
+	}
+	defer r.drop(ctx, c)
+	r.log.Info("daemon joined", "user", c.user, "host", c.host)
+
+	for {
+		frame, err := conn.ReadFrame(ctx)
+		if err != nil {
+			return
+		}
+		r.dispatch(ctx, c, frame)
+	}
+}
+
+// handshake reads the hello, validates the shared secret, registers the client,
+// and replies with the roster.
+func (r *Relay) handshake(ctx context.Context, conn transport.Conn) (*client, error) {
+	hctx, cancel := context.WithTimeout(ctx, handshakeTimeout)
+	defer cancel()
+
+	frame, err := conn.ReadFrame(hctx)
+	if err != nil {
+		return nil, err
+	}
+	var hello protocol.Hello
+	if err := json.Unmarshal(frame, &hello); err != nil || hello.Type != protocol.TypeHello {
+		return nil, errClose(conn, "expected hello")
+	}
+	if hello.Secret != r.cfg.Secret {
+		return nil, errClose(conn, "bad secret")
+	}
+
+	c := &client{user: hello.User, host: hello.Host, conn: conn}
+	r.register(c)
+
+	welcome := protocol.Welcome{
+		Type:     protocol.TypeWelcome,
+		Roster:   r.roster(),
+		Protocol: version.Protocol,
+	}
+	if err := c.send(ctx, welcome); err != nil {
+		return nil, err
+	}
+	r.broadcast(ctx, protocol.Presence{Type: protocol.TypePresence, User: c.user, Online: true}, c.user)
+	return c, nil
+}
+
+// dispatch routes one inbound frame from a connected client.
+func (r *Relay) dispatch(ctx context.Context, from *client, frame []byte) {
+	var env protocol.Envelope
+	if err := json.Unmarshal(frame, &env); err != nil {
+		return
+	}
+	switch env.Type {
+	case protocol.TypePoke:
+		var p protocol.Poke
+		if err := json.Unmarshal(frame, &p); err != nil {
+			return
+		}
+		r.route(ctx, from, p)
+	}
+}
+
+// route forwards a poke to its target, or reports it offline (no queue in phase 0).
+func (r *Relay) route(ctx context.Context, from *client, p protocol.Poke) {
+	r.mu.Lock()
+	target := r.clients[p.To]
+	r.mu.Unlock()
+
+	if target == nil {
+		_ = from.send(ctx, protocol.Error{
+			Type: protocol.TypeError, ID: p.ID, Code: "offline",
+			Message: p.To + " is not connected",
+		})
+		return
+	}
+	poked := protocol.Poked{
+		Type: protocol.TypePoked, ID: p.ID, From: from.user,
+		Strength: p.Strength, Note: p.Note, TS: p.TS,
+	}
+	if err := target.send(ctx, poked); err != nil {
+		_ = from.send(ctx, protocol.Error{Type: protocol.TypeError, ID: p.ID, Code: "deliver_failed", Message: err.Error()})
+		return
+	}
+	// tell the sender it landed on the target daemon
+	_ = from.send(ctx, protocol.Ack{Type: protocol.TypeAck, ID: p.ID, Seen: false})
+}
+
+func (r *Relay) register(c *client) {
+	r.mu.Lock()
+	if old := r.clients[c.user]; old != nil {
+		_ = old.conn.Close() // newest connection wins
+	}
+	r.clients[c.user] = c
+	r.mu.Unlock()
+}
+
+func (r *Relay) drop(ctx context.Context, c *client) {
+	r.mu.Lock()
+	if r.clients[c.user] == c {
+		delete(r.clients, c.user)
+	}
+	r.mu.Unlock()
+	_ = c.conn.Close()
+	r.log.Info("daemon left", "user", c.user)
+	r.broadcast(ctx, protocol.Presence{Type: protocol.TypePresence, User: c.user, Online: false}, "")
+}
+
+func (r *Relay) roster() []protocol.RosterEntry {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]protocol.RosterEntry, 0, len(r.clients))
+	for _, c := range r.clients {
+		out = append(out, protocol.RosterEntry{User: c.user, Host: c.host})
+	}
+	return out
+}
+
+// broadcast sends a frame to every client except the named one.
+func (r *Relay) broadcast(ctx context.Context, v any, except string) {
+	r.mu.Lock()
+	targets := make([]*client, 0, len(r.clients))
+	for u, c := range r.clients {
+		if u != except {
+			targets = append(targets, c)
+		}
+	}
+	r.mu.Unlock()
+	for _, c := range targets {
+		_ = c.send(ctx, v)
+	}
+}
+
+// errClose sends a typed close reason and returns a sentinel error.
+func errClose(conn transport.Conn, msg string) error {
+	b, _ := json.Marshal(protocol.Error{Type: protocol.TypeError, Code: "handshake", Message: msg})
+	_ = conn.WriteFrame(context.Background(), b)
+	return &handshakeError{msg}
+}
+
+type handshakeError struct{ msg string }
+
+func (e *handshakeError) Error() string { return e.msg }

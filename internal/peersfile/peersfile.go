@@ -38,9 +38,6 @@ func (w *Writer) Append(e Entry) error {
 		return err
 	}
 	defer unlock()
-	if err := os.MkdirAll(filepath.Dir(w.path), 0o700); err != nil {
-		return err
-	}
 	f, err := os.OpenFile(w.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return err
@@ -65,6 +62,9 @@ func (w *Writer) Clear() error {
 
 // lock implements the mkdir-based mutual exclusion the tmux-alerts scripts use.
 func (w *Writer) lock() (func(), error) {
+	if err := os.MkdirAll(filepath.Dir(w.path), 0o700); err != nil {
+		return nil, err
+	}
 	dir := w.path + ".lock"
 	deadline := time.Now().Add(2 * time.Second)
 	for {
