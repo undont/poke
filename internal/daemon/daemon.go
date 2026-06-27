@@ -50,6 +50,7 @@ type Daemon struct {
 	peers   *peersfile.Writer
 	dialer  transport.Dialer
 	browser discovery.Browser
+	locator discovery.RelayLocator
 	adv     discovery.Advertiser
 
 	cancel context.CancelFunc // stops the daemon, set in Run
@@ -61,9 +62,11 @@ type Daemon struct {
 	dnd     bool
 }
 
-// New constructs a Daemon from resolved config.
+// New constructs a Daemon from resolved config. a configured relay_addr selects
+// the fixed-address discovery tier (no mDNS); otherwise the daemon browses the
+// LAN for a relay.
 func New(cfg *config.Config, log *slog.Logger) *Daemon {
-	return &Daemon{
+	d := &Daemon{
 		cfg:     cfg,
 		log:     log,
 		peers:   peersfile.New(cfg.PeersFile),
@@ -73,6 +76,12 @@ func New(cfg *config.Config, log *slog.Logger) *Daemon {
 		peerSet: make(map[string]protocol.RosterEntry),
 		pending: make(map[string]chan outcome),
 	}
+	if cfg.RelayAddr != "" {
+		d.locator = discovery.NewFixedLocator(cfg.RelayAddr)
+	} else {
+		d.locator = discovery.NewMDNSLocator(d.browser)
+	}
+	return d
 }
 
 // Run binds the unix socket, advertises and serves direct peer connections,
@@ -169,13 +178,13 @@ func (d *Daemon) servePeer(ctx context.Context, conn transport.Conn) {
 	}
 }
 
-// connectLoop looks for a relay each cycle; finding one it runs a relay session,
+// connectLoop locates a relay each cycle; finding one it runs a relay session,
 // otherwise it stays in live-only mode and re-checks later. while there is no
 // relay connection, pokes are delivered directly peer-to-peer.
 func (d *Daemon) connectLoop(ctx context.Context) {
 	for ctx.Err() == nil {
 		findCtx, cancel := context.WithTimeout(ctx, relaySearch)
-		relay, err := d.browser.FindRelay(findCtx)
+		relay, err := d.locator.Locate(findCtx)
 		cancel()
 		if err != nil {
 			if ctx.Err() != nil {
@@ -190,8 +199,18 @@ func (d *Daemon) connectLoop(ctx context.Context) {
 		}
 		d.setConn(nil)
 		d.setRoster(nil) // the roster is unknown while disconnected
-		d.sleep(ctx, backoffMin)
+		d.sleep(ctx, d.reconnectDelay())
 	}
+}
+
+// reconnectDelay paces reconnection. with mDNS, re-browsing already throttles
+// the loop, so a short pause suffices; with a fixed address Locate returns
+// instantly, so back off longer to avoid spinning on an unreachable relay.
+func (d *Daemon) reconnectDelay() time.Duration {
+	if d.cfg.RelayAddr != "" {
+		return relayRetry
+	}
+	return backoffMin
 }
 
 // session dials, completes the handshake, and pumps frames until it drops.

@@ -121,7 +121,14 @@ op read "op://team/poke/secret" | poke secret
 A relay is optional: with no relay on the network the daemon delivers directly peer-to-peer (live-only). Run one if you want durable offline queueing:
 
 ```sh
-poked --relay                     # on a box that stays on
+poked --relay                     # on a box that stays on, stable port :7373
+```
+
+On a flat LAN the daemon finds the relay over mDNS, no addresses typed. To reach a relay that mDNS will not surface (a different subnet, or a fixed box), set `relay_addr` in the config file (or `POKE_RELAY_ADDR`) to its `host:port`; the daemon then dials it directly and skips discovery. The relay listens on `:7373` by default, overridable with `relay_listen` / `POKE_RELAY_LISTEN`.
+
+```sh
+# ~/.config/poke/config
+relay_addr = relaybox.example:7373
 ```
 
 `POKE_SECRET` and `POKE_USER` environment variables still work and take precedence over the config file, which is handy for testing or login items.
