@@ -74,7 +74,7 @@ poke secret                       # prompts; or: echo "$SECRET" | poke secret
 poke name sean                    # your display name (defaults to $USER)
 
 poke connect                      # starts the daemon if it is not up
-poke alice high "prod is down"
+poke alice "prod is down" --high   # urgency flag may go anywhere; default medium
 ```
 
 a relay is optional: with no relay on the network the daemon delivers directly

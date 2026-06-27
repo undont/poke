@@ -93,16 +93,34 @@ func parse(args []string) (protocol.IPCRequest, error) {
 	return parsePoke(args)
 }
 
-// parsePoke reads `<user> [strength] [note...]`.
+// parsePoke reads `<user> [note...]` with an urgency flag (--low/--medium/
+// --high) that may appear anywhere. urgency is a flag rather than a positional
+// so a note starting with a level word is never mistaken for the urgency.
 func parsePoke(args []string) (protocol.IPCRequest, error) {
-	req := protocol.IPCRequest{Verb: protocol.IPCPoke, To: args[0], Strength: protocol.Medium}
-	rest := args[1:]
-	if len(rest) > 0 && protocol.ValidStrength(protocol.Strength(rest[0])) {
-		req.Strength = protocol.Strength(rest[0])
-		rest = rest[1:]
+	req := protocol.IPCRequest{Verb: protocol.IPCPoke, Strength: protocol.Medium}
+	var words []string
+	strengthSet := false
+	for _, a := range args {
+		switch a {
+		case "--low", "--medium", "--high":
+			s := protocol.Strength(strings.TrimPrefix(a, "--"))
+			if strengthSet && req.Strength != s {
+				return req, fmt.Errorf("conflicting urgency flags")
+			}
+			req.Strength, strengthSet = s, true
+		default:
+			if strings.HasPrefix(a, "--") {
+				return req, fmt.Errorf("unknown flag %q", a)
+			}
+			words = append(words, a)
+		}
 	}
-	if len(rest) > 0 {
-		req.Note = strings.Join(rest, " ")
+	if len(words) == 0 {
+		return req, fmt.Errorf("usage: poke <user> [note] [--low|--medium|--high]")
+	}
+	req.To = words[0]
+	if len(words) > 1 {
+		req.Note = strings.Join(words[1:], " ")
 	}
 	return req, nil
 }
@@ -154,7 +172,7 @@ func usage() {
 
 usage:
   poke connect              ensure the daemon is up, announce presence
-  poke <user> [low|medium|high] [note]
+  poke <user> [note] [--low|--medium|--high]    urgency may go anywhere, default medium
   poke clear                dismiss incoming pokes
   poke who                  show the live roster
   poke dnd [on|off]         toggle do-not-disturb
