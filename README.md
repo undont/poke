@@ -25,9 +25,8 @@ the peers file and rings the bell. `poke render` paints a status-right segment
 offline target is queued durably on the relay (bbolt) and drained in order when
 they reconnect, dropping anything past `POKE_QUEUE_TTL` (default 24h).
 
-not yet built: urgency persistence (high persisting until cleared), daemon
-autostart, `seen` acks, presence-driven `who`, and the live-only fallback when
-no relay is up.
+not yet built: urgency persistence (high persisting until cleared), `seen`
+acks, presence-driven `who`, and the live-only fallback when no relay is up.
 
 ## Build
 
@@ -36,3 +35,24 @@ go build ./...
 go build -o poke ./cmd/poke
 go build -o poked ./cmd/poked
 ```
+
+## Running
+
+every machine shares one secret, set as `POKE_SECRET`. on one always-on box run
+the relay (`poked --relay`); everywhere else run the daemon.
+
+```sh
+export POKE_SECRET=your-team-secret   # same on every machine
+
+# the always-on box
+poked --relay
+
+# each dev machine: start the daemon (poke connect starts it if it is not up)
+poke connect
+poke alice high "prod is down"
+```
+
+for the daemon to be up before you think to run `poke connect`, install the
+login item for your platform: `examples/launchd/com.poke.poked.plist` (macOS) or
+`examples/systemd/poked.service` (linux). both carry the secret privately rather
+than on the command line.

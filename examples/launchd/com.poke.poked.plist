@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  macOS login autostart for the poke daemon.
+
+  install:
+    cp examples/launchd/com.poke.poked.plist ~/Library/LaunchAgents/
+    # edit the path and secret below first
+    launchctl load ~/Library/LaunchAgents/com.poke.poked.plist
+
+  the shared secret lives here rather than in a committed file; keep this
+  plist private (it is under your home, not the repo).
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.poke.poked</string>
+
+	<key>ProgramArguments</key>
+	<array>
+		<string>/usr/local/bin/poked</string>
+	</array>
+
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>POKE_SECRET</key>
+		<string>change-me-shared-team-secret</string>
+	</dict>
+
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+
+	<key>StandardOutPath</key>
+	<string>/tmp/poked.out.log</string>
+	<key>StandardErrorPath</key>
+	<string>/tmp/poked.err.log</string>
+</dict>
+</plist>

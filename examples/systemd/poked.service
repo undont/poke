@@ -1,0 +1,24 @@
+# linux login autostart for the poke daemon (systemd user unit).
+#
+# install:
+#   cp examples/systemd/poked.service ~/.config/systemd/user/
+#   mkdir -p ~/.config/poke && printf 'POKE_SECRET=change-me\n' > ~/.config/poke/env
+#   chmod 600 ~/.config/poke/env
+#   systemctl --user enable --now poked.service
+#
+# the shared secret lives in the EnvironmentFile, kept private and unreadable
+# by others; it is never passed on the command line.
+
+[Unit]
+Description=poke daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=%h/.local/bin/poked
+EnvironmentFile=%h/.config/poke/env
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=default.target

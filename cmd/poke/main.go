@@ -42,6 +42,13 @@ func run(args []string) error {
 		return err
 	}
 
+	// connect is the one verb that may need to start the daemon first.
+	if req.Verb == protocol.IPCConnect {
+		if err := ensureDaemon(cfg); err != nil {
+			return err
+		}
+	}
+
 	resp, err := ipc.Send(cfg.SocketPath, req)
 	if err != nil {
 		return fmt.Errorf("daemon unreachable (%w); is `poked` running?", err)
