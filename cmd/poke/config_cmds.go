@@ -1,9 +1,12 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"strings"
 
 	"golang.org/x/term"
@@ -32,10 +35,14 @@ func setName(cfg *config.Config, args []string) error {
 	return nil
 }
 
-// setSecret stores the shared team secret in the config file. like `gh secret
-// set`, it reads from a hidden prompt on a terminal or from stdin when piped,
-// and never echoes the value back.
+// setSecret stores the shared team secret in the config file. with --generate
+// it mints a strong secret and copies it to the clipboard; otherwise, like `gh
+// secret set`, it reads from a hidden prompt on a terminal or from stdin when
+// piped, and never echoes the value back.
 func setSecret(cfg *config.Config, args []string) error {
+	if len(args) > 0 && (args[0] == "--generate" || args[0] == "-g") {
+		return generateSecret(cfg)
+	}
 	secret, err := readSecret(args)
 	if err != nil {
 		return err
@@ -56,6 +63,56 @@ func setSecret(cfg *config.Config, args []string) error {
 	}
 	nudgeRestart(cfg)
 	return nil
+}
+
+// generateSecret mints a 256-bit secret, stores it, and copies it to the
+// clipboard so it never lands in terminal scrollback. without a clipboard tool
+// it falls back to printing, the only way to still hand it off.
+func generateSecret(cfg *config.Config) error {
+	var b [32]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return err
+	}
+	secret := hex.EncodeToString(b[:])
+	if err := config.SetValue("secret", secret); err != nil {
+		return err
+	}
+	if err := copyClipboard(secret); err == nil {
+		fmt.Println("secret generated and copied to the clipboard")
+		fmt.Fprintln(os.Stderr, "share it with your team out of band (e.g. a password manager); on each machine run `poke secret` and paste it")
+	} else {
+		fmt.Fprintln(os.Stderr, "no clipboard tool found; printing the secret so you can share it:")
+		fmt.Println(secret)
+	}
+	if os.Getenv("POKE_SECRET") != "" {
+		fmt.Fprintln(os.Stderr, "note: POKE_SECRET is set and overrides the config file")
+	}
+	nudgeRestart(cfg)
+	return nil
+}
+
+// copyClipboard pipes s to the platform clipboard tool, if one is present.
+func copyClipboard(s string) error {
+	var cmd *exec.Cmd
+	switch {
+	case hasExec("pbcopy"):
+		cmd = exec.Command("pbcopy")
+	case hasExec("wl-copy"):
+		cmd = exec.Command("wl-copy")
+	case hasExec("xclip"):
+		cmd = exec.Command("xclip", "-selection", "clipboard")
+	case hasExec("xsel"):
+		cmd = exec.Command("xsel", "--clipboard", "--input")
+	default:
+		return fmt.Errorf("no clipboard tool")
+	}
+	cmd.Stdin = strings.NewReader(s)
+	return cmd.Run()
+}
+
+func hasExec(name string) bool {
+	_, err := exec.LookPath(name)
+	return err == nil
 }
 
 // readSecret gets the secret value without ever printing it: an explicit

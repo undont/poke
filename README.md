@@ -70,18 +70,30 @@ make dist           # cross-compiled release binaries into dist/
 make help           # list every target
 ```
 
-## Running
+## Team setup
 
-every machine shares one secret. set it (and your display name) from the cli;
-both persist to `$XDG_CONFIG_HOME/poke/config` (mode 0600). `poke secret` prompts
-on a terminal or reads stdin, like `gh secret set`, and never echoes the value.
+every machine on the team shares one secret. on the first machine, mint it:
 
 ```sh
-poke secret                       # prompts; or: echo "$SECRET" | poke secret
-poke name sean                    # your display name (defaults to $USER)
+poke secret --generate     # strong secret: stored, and copied to your clipboard
+```
 
-poke connect                      # starts the daemon if it is not up
+share that value out of band, ideally a team password manager (or a dm). then on
+every machine, including the first, set the same secret and your name and connect:
+
+```sh
+poke secret                # hidden prompt; paste the shared value (or pipe it in)
+poke name sean             # display name, defaults to $USER
+poke connect               # starts the daemon if it is not up
 poke alice "prod is down" --high   # urgency flag may go anywhere; default medium
+```
+
+both persist to `$XDG_CONFIG_HOME/poke/config` (mode 0600); `poke secret` reads a
+hidden prompt or stdin, like `gh secret set`, and never echoes the value. if your
+team keeps secrets in a password manager with a cli, pull it straight in instead:
+
+```sh
+op read "op://team/poke/secret" | poke secret
 ```
 
 a relay is optional: with no relay on the network the daemon delivers directly

@@ -185,7 +185,7 @@ usage:
   poke who                  show the live roster
   poke dnd [on|off]         toggle do-not-disturb
   poke name [<name>]        show or set your display name
-  poke secret               set the shared team secret (prompts, or reads stdin)
+  poke secret [--generate]  set the shared team secret (prompts/stdin; --generate mints + copies one)
   poke render               print the tmux status segment (for status-right)
 `)
 }
