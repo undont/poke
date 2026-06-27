@@ -15,6 +15,7 @@ type Config struct {
 	PeersFile  string // tmux alert surface for incoming pokes
 	StateDir   string // logs and durable daemon state
 	RelayAddr  string // optional fixed relay address, empty means mDNS
+	Icon       string // status-bar glyph for incoming pokes, empty means default
 }
 
 // Load assembles a Config from environment and sensible defaults.
@@ -31,6 +32,7 @@ func Load() (*Config, error) {
 		PeersFile:  peersFile(),
 		StateDir:   stateDir(),
 		RelayAddr:  os.Getenv("POKE_RELAY_ADDR"),
+		Icon:       os.Getenv("POKE_ICON"),
 	}
 	return c, nil
 }

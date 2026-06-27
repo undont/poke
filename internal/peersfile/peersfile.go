@@ -60,6 +60,49 @@ func (w *Writer) Clear() error {
 	return nil
 }
 
+// Read returns the live pokes on disk, skipping any malformed line. it takes no
+// lock: the renderer runs on every status refresh and must not block a writer,
+// and a torn line is simply dropped until the next refresh. a missing file
+// reads as no pokes.
+func Read(path string) ([]Entry, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var out []Entry
+	for line := range strings.SplitSeq(string(b), "\n") {
+		if line == "" {
+			continue
+		}
+		if e, ok := decode(line); ok {
+			out = append(out, e)
+		}
+	}
+	return out, nil
+}
+
+func decode(line string) (Entry, bool) {
+	f := strings.SplitN(line, ":", 6)
+	if len(f) != 6 {
+		return Entry{}, false
+	}
+	ts, err := strconv.ParseInt(f[2], 10, 64)
+	if err != nil {
+		return Entry{}, false
+	}
+	return Entry{
+		From:     f[0],
+		Strength: protocol.Strength(f[1]),
+		TS:       ts,
+		ID:       f[3],
+		Seen:     f[4] == "1",
+		Note:     decodeNote(f[5]),
+	}, true
+}
+
 // lock implements the mkdir-based mutual exclusion the tmux-alerts scripts use.
 func (w *Writer) lock() (func(), error) {
 	if err := os.MkdirAll(filepath.Dir(w.path), 0o700); err != nil {
@@ -119,4 +162,10 @@ func encodeNote(s string) string {
 		}
 	}
 	return b.String()
+}
+
+// decodeNote reverses encodeNote.
+func decodeNote(s string) string {
+	r := strings.NewReplacer("%3A", ":", "%0A", "\n", "%25", "%")
+	return r.Replace(s)
 }

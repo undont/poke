@@ -9,7 +9,9 @@ import (
 
 	"github.com/undont/poke/internal/config"
 	"github.com/undont/poke/internal/ipc"
+	"github.com/undont/poke/internal/peersfile"
 	"github.com/undont/poke/internal/protocol"
+	"github.com/undont/poke/internal/render"
 )
 
 func main() {
@@ -29,6 +31,12 @@ func run(args []string) error {
 		return err
 	}
 
+	// render reads the peers file directly: status-right runs on every refresh
+	// and must not depend on the daemon socket being up.
+	if args[0] == "render" {
+		return renderSegment(cfg)
+	}
+
 	req, err := parse(args)
 	if err != nil {
 		return err
@@ -42,6 +50,16 @@ func run(args []string) error {
 		return fmt.Errorf("%s", resp.Error)
 	}
 	printResp(req, resp)
+	return nil
+}
+
+// renderSegment prints the tmux status-right segment for the live pokes.
+func renderSegment(cfg *config.Config) error {
+	entries, err := peersfile.Read(cfg.PeersFile)
+	if err != nil {
+		return err
+	}
+	fmt.Print(render.Segment(entries, render.Options{Icon: cfg.Icon}))
 	return nil
 }
 
@@ -124,5 +142,6 @@ usage:
   poke clear                dismiss incoming pokes
   poke who                  show the live roster
   poke dnd [on|off]         toggle do-not-disturb
+  poke render               print the tmux status segment (for status-right)
 `)
 }
