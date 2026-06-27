@@ -28,12 +28,30 @@ they reconnect, dropping anything past `POKE_QUEUE_TTL` (default 24h).
 not yet built: urgency persistence (high persisting until cleared), `seen`
 acks, presence-driven `who`, and the live-only fallback when no relay is up.
 
+## Install
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/undont/poke/main/install.sh | bash
+```
+
+this downloads the `poke` and `poked` binaries for your machine from the latest
+release into `~/.local/bin` (override with `POKE_INSTALL_DIR`). if no release
+exists yet and go is installed, it builds from source instead. equivalent
+manual routes:
+
+```sh
+go install github.com/undont/poke/cmd/poke@latest
+go install github.com/undont/poke/cmd/poked@latest
+# or, from a checkout:
+make install
+```
+
 ## Build
 
 ```sh
-go build ./...
-go build -o poke ./cmd/poke
-go build -o poked ./cmd/poked
+make build          # bin/poke and bin/poked, version stamped from git
+make dist           # cross-compiled release binaries into dist/
+make help           # list every target
 ```
 
 ## Running
