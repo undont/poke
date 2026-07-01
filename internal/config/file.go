@@ -54,7 +54,7 @@ func SetValue(key, value string) error {
 	var lines []string
 	replaced := false
 	prefix := key + " ="
-	for _, line := range strings.Split(string(existing), "\n") {
+	for line := range strings.SplitSeq(string(existing), "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), key+" =") || strings.HasPrefix(strings.TrimSpace(line), key+"=") {
 			lines = append(lines, prefix+" "+value)
 			replaced = true

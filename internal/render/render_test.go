@@ -3,6 +3,7 @@ package render
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/undont/poke/internal/peersfile"
 	"github.com/undont/poke/internal/protocol"
@@ -30,8 +31,8 @@ func TestColourStablePerUser(t *testing.T) {
 
 func TestSegmentEmphasis(t *testing.T) {
 	seg := Segment([]peersfile.Entry{entry("alice", protocol.High)}, Options{Icon: "B"})
-	if !strings.Contains(seg, "#[bold]") {
-		t.Fatalf("high urgency should be bold: %q", seg)
+	if !strings.Contains(seg, "↑") {
+		t.Fatalf("high urgency should show an up arrow: %q", seg)
 	}
 	if !strings.Contains(seg, "alice") {
 		t.Fatalf("name missing: %q", seg)
@@ -43,8 +44,8 @@ func TestSegmentANSI(t *testing.T) {
 	if strings.Contains(seg, "#[") {
 		t.Fatalf("ansi format must not emit tmux markup: %q", seg)
 	}
-	if !strings.Contains(seg, "\x1b[1m") {
-		t.Fatalf("high urgency should be bold (ansi): %q", seg)
+	if !strings.Contains(seg, "↑") {
+		t.Fatalf("high urgency should show an up arrow (ansi): %q", seg)
 	}
 	if !strings.Contains(seg, "\x1b[38;5;") {
 		t.Fatalf("name should carry a 256-colour fg (ansi): %q", seg)
@@ -54,6 +55,30 @@ func TestSegmentANSI(t *testing.T) {
 	}
 	if !strings.Contains(seg, "alice") {
 		t.Fatalf("name missing: %q", seg)
+	}
+}
+
+func TestListEmpty(t *testing.T) {
+	if got := List(nil); got != "no pokes waiting" {
+		t.Fatalf("want empty-state message, got %q", got)
+	}
+}
+
+func TestListArrowsAndOrder(t *testing.T) {
+	now := time.Now().Unix()
+	entries := []protocol.PokeEntry{
+		{From: "alice", Strength: protocol.High, Note: "prod is down", TS: now - 120},
+		{From: "bob", Strength: protocol.Medium, Note: "lunch?", TS: now},
+	}
+	lines := strings.Split(List(entries), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("want 2 lines, got %d: %q", len(lines), lines)
+	}
+	if !strings.Contains(lines[0], "bob") || strings.Contains(lines[0], "↑") {
+		t.Fatalf("newest (bob, medium) should sort first with no arrow: %q", lines[0])
+	}
+	if !strings.Contains(lines[1], "alice") || !strings.Contains(lines[1], "↑") {
+		t.Fatalf("high urgency alice should carry an up arrow: %q", lines[1])
 	}
 }
 
