@@ -420,6 +420,8 @@ func (d *Daemon) handle(req protocol.IPCRequest) protocol.IPCResponse {
 		return d.handleWho()
 	case protocol.IPCDND:
 		return d.handleDND(req)
+	case protocol.IPCShow:
+		return d.handleShow(req)
 	default:
 		return protocol.IPCResponse{OK: false, Error: "unknown verb: " + req.Verb}
 	}
@@ -517,6 +519,27 @@ func (d *Daemon) handleWho() protocol.IPCResponse {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].User < out[j].User })
 	return protocol.IPCResponse{OK: true, Roster: out}
+}
+
+// handleShow answers `poke show`: the live pokes, with message and urgency,
+// acked as seen and cleared same as `poke clear` unless the caller asked to
+// keep them.
+func (d *Daemon) handleShow(req protocol.IPCRequest) protocol.IPCResponse {
+	entries, err := peersfile.Read(d.cfg.PeersFile)
+	if err != nil {
+		return protocol.IPCResponse{OK: false, Error: err.Error()}
+	}
+	out := make([]protocol.PokeEntry, len(entries))
+	for i, e := range entries {
+		out[i] = protocol.PokeEntry{From: e.From, Strength: e.Strength, TS: e.TS, Note: e.Note}
+	}
+	if !req.Keep {
+		d.emitSeen()
+		if err := d.peers.Clear(); err != nil {
+			return protocol.IPCResponse{OK: false, Error: err.Error()}
+		}
+	}
+	return protocol.IPCResponse{OK: true, Entries: out}
 }
 
 func (d *Daemon) handleDND(req protocol.IPCRequest) protocol.IPCResponse {

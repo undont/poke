@@ -39,7 +39,7 @@ See [Team Setup](#team-setup) for minting and sharing the secret across machines
 
 ## How It Works
 
-A poke travels across machines end to end: the daemon finds the relay over mDNS, dials it over a websocket, and on delivery writes the peers file and rings the bell. `poke render` paints a status-right segment (icon, stable per-user colour, urgency emphasis, `+N` overflow); see [`examples/tmux.conf`](examples/tmux.conf) for the status line and clear keybinding.
+A poke travels across machines end to end: the daemon finds the relay over mDNS, dials it over a websocket, and on delivery writes the peers file and rings the bell. `poke render` paints a status-right segment (icon, stable per-user colour, an urgency arrow, `+N` overflow); see [`examples/tmux.conf`](examples/tmux.conf) for the status line and clear keybinding. `poke show` prints the full message behind each poke, in the same style, and clears them once you've read them (`--keep` to just peek).
 
 A poke to an offline target is queued durably on the relay (bbolt) and drained in order when they reconnect, dropping anything past `POKE_QUEUE_TTL` (default 24h). `poke who` shows the live roster, kept current as peers join and leave. Every poke persists until you clear it; urgency drives only how loud the arrival is.
 
@@ -61,6 +61,7 @@ How an incoming poke is *surfaced* is the recipient's choice (`poke surface`, or
 | `poke connect` | Start the daemon and join the relay if it is not up |
 | `poke disconnect` | Stop the daemon |
 | `poke clear` | Clear your current poke and send a seen ack |
+| `poke show [--keep]` | Print pending pokes with message and urgency; clears them (and sends a seen ack) unless `--keep` |
 | `poke who` | Show the live roster of peers |
 | `poke dnd` | Toggle do-not-disturb |
 | `poke name <name>` | Set your display name, defaults to `$USER` |

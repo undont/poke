@@ -107,6 +107,8 @@ func parse(args []string) (protocol.IPCRequest, error) {
 		return protocol.IPCRequest{Verb: protocol.IPCWho}, nil
 	case "dnd":
 		return parseDND(args[1:])
+	case "show":
+		return parseShow(args[1:])
 	case "help", "-h", "--help":
 		usage()
 		os.Exit(0)
@@ -146,6 +148,22 @@ func parsePoke(args []string) (protocol.IPCRequest, error) {
 	return req, nil
 }
 
+// parseShow reads `poke show [--keep]`; by default the shown pokes are
+// cleared (and their senders acked as seen) the same as `poke clear`, --keep
+// leaves them live.
+func parseShow(args []string) (protocol.IPCRequest, error) {
+	req := protocol.IPCRequest{Verb: protocol.IPCShow}
+	for _, a := range args {
+		switch a {
+		case "--keep":
+			req.Keep = true
+		default:
+			return req, fmt.Errorf("unknown flag %q (use --keep)", a)
+		}
+	}
+	return req, nil
+}
+
 func parseDND(args []string) (protocol.IPCRequest, error) {
 	req := protocol.IPCRequest{Verb: protocol.IPCDND}
 	if len(args) > 0 {
@@ -181,6 +199,12 @@ func printResp(req protocol.IPCRequest, resp protocol.IPCResponse) {
 			state = "on"
 		}
 		fmt.Println("dnd", state)
+	case protocol.IPCShow:
+		if len(resp.Entries) == 0 {
+			fmt.Fprintln(os.Stderr, "no pokes waiting")
+			return
+		}
+		fmt.Println(render.List(resp.Entries))
 	default:
 		if resp.Message != "" {
 			fmt.Println(resp.Message)
@@ -196,6 +220,7 @@ usage:
   poke disconnect           stop the daemon
   poke <user> [note] [--low|--medium|--high]    urgency may go anywhere, default medium
   poke clear                dismiss incoming pokes
+  poke show [--keep]        print pending pokes (message + urgency); clears them unless --keep
   poke who                  show the live roster
   poke dnd [on|off]         toggle do-not-disturb
   poke name [<name>]        show or set your display name

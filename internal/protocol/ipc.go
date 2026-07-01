@@ -11,6 +11,7 @@ const (
 	IPCClear      = "clear"
 	IPCWho        = "who"
 	IPCDND        = "dnd"
+	IPCShow       = "show"
 )
 
 // IPCRequest is one CLI invocation.
@@ -20,6 +21,15 @@ type IPCRequest struct {
 	Strength Strength `json:"strength,omitempty"`
 	Note     string   `json:"note,omitempty"`
 	DND      *bool    `json:"dnd,omitempty"`
+	Keep     bool     `json:"keep,omitempty"`
+}
+
+// PokeEntry is one live poke as reported to the CLI by `poke show`.
+type PokeEntry struct {
+	From     string   `json:"from"`
+	Strength Strength `json:"strength"`
+	TS       int64    `json:"ts"`
+	Note     string   `json:"note"`
 }
 
 // DeliveryMode reports how a poke left the building.
@@ -39,4 +49,5 @@ type IPCResponse struct {
 	Roster  []RosterEntry `json:"roster,omitempty"`
 	DND     *bool         `json:"dnd,omitempty"`
 	Message string        `json:"message,omitempty"`
+	Entries []PokeEntry   `json:"entries,omitempty"`
 }
