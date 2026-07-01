@@ -39,6 +39,9 @@ func loadFile() map[string]string {
 		}
 		out[strings.TrimSpace(k)] = strings.TrimSpace(v)
 	}
+	if err := sc.Err(); err != nil {
+		fmt.Fprintln(os.Stderr, "poke: warning: config file read error:", err)
+	}
 	return out
 }
 
